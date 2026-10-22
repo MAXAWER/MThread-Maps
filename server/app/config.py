@@ -82,7 +82,7 @@ class Settings:
     agent_effort: str = "high"
     agent_max_tool_calls: int = 10
     agent_web: bool = True
-    agent_web_max_uses: int = 5
+    agent_web_max_uses: int = 8
     agent_timeout_s: float = 170.0
     answer_effort: str = "medium"
     answer_timeout_s: float = 15.0
@@ -170,7 +170,7 @@ class Settings:
             agent_effort=_str("AGENT_EFFORT", "high"),
             agent_max_tool_calls=_int("AGENT_MAX_TOOL_CALLS", 10),
             agent_web=os.getenv("AGENT_WEB", "1") != "0",
-            agent_web_max_uses=_int("AGENT_WEB_MAX_USES", 5),
+            agent_web_max_uses=_int("AGENT_WEB_MAX_USES", 8),
             agent_timeout_s=_float("AGENT_TIMEOUT_S", 170.0),
             answer_effort=_str("ANSWER_EFFORT", "medium"),
             answer_timeout_s=_float("ANSWER_TIMEOUT_S", 15.0),
