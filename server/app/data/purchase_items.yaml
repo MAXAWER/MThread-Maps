@@ -1,0 +1,11 @@
+# Покупки по пути (раздел 4 ТЗ): id → основной запрос и запасные запросы в 2ГИС.
+# solves_rain: покупка снимает проблему дождя (зонт, дождевик).
+- {id: umbrella, name_ru: зонт, queries: [зонт, супермаркет, торговый центр], categories: [supermarket, mall], solves_rain: true}
+- {id: raincoat, name_ru: дождевик, queries: [дождевик, супермаркет, торговый центр], categories: [supermarket, mall], solves_rain: true}
+- {id: powerbank, name_ru: повербанк, queries: [повербанк, салон связи, торговый центр], categories: [mobile_store, mall], solves_rain: false}
+- {id: pharmacy, name_ru: аптека, queries: [аптека], categories: [pharmacy], solves_rain: false}
+- {id: water_snack, name_ru: вода и перекус, queries: [продукты, супермаркет], categories: [supermarket], solves_rain: false}
+- {id: flowers, name_ru: цветы, queries: [цветы], categories: [flowers], solves_rain: false}
+- {id: gift, name_ru: подарок, queries: [подарки, сувениры, торговый центр], categories: [souvenirs, mall], solves_rain: false}
+- {id: sim_topup, name_ru: сим-карта или пополнение, queries: [салон связи], categories: [mobile_store], solves_rain: false}
+- {id: cash_atm, name_ru: наличные, queries: [банкомат], categories: [atm], solves_rain: false}

@@ -1,0 +1,60 @@
+{"lang": "ru", "query": "Хочу кофе рядом", "labels": {"intent": "find_place", "category_primary": "coffee", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Где поесть недорого в центре?", "labels": {"intent": "find_place", "category_primary": "cafe", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Кофейня с wi-fi, чтобы поработать пару часов", "labels": {"intent": "find_place", "category_primary": "coffee", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Нет зонта, через 30 минут дождь, хочу в кофейню", "labels": {"intent": "plan_route", "category_primary": "coffee", "transport": "unspecified", "open_requirement": "at_arrival"}}
+{"lang": "ru", "query": "Куда сходить с ребёнком 5 лет в выходные", "labels": {"intent": "find_place", "category_primary": "kids_center", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Хан Шатыр", "labels": {"intent": "navigate_to", "category_primary": "mall", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Как добраться до Байтерека пешком", "labels": {"intent": "navigate_to", "category_primary": "viewpoint", "transport": "walking", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Во сколько закрывается Mega Silk Way?", "labels": {"intent": "place_info", "category_primary": "mall", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Ресторан для свидания, открыт допоздна", "labels": {"intent": "find_place", "category_primary": "restaurant", "transport": "unspecified", "open_requirement": "late"}}
+{"lang": "ru", "query": "Бар, который работает после полуночи", "labels": {"intent": "find_place", "category_primary": "bar", "transport": "unspecified", "open_requirement": "late"}}
+{"lang": "ru", "query": "Круглосуточная аптека рядом", "labels": {"intent": "find_place", "category_primary": "pharmacy", "transport": "unspecified", "open_requirement": "24h"}}
+{"lang": "ru", "query": "Банкомат поблизости прямо сейчас", "labels": {"intent": "find_place", "category_primary": "atm", "transport": "unspecified", "open_requirement": "now"}}
+{"lang": "ru", "query": "Хочу погулять в парке пешком часик", "labels": {"intent": "find_place", "category_primary": "park", "transport": "walking", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Еду на машине, где поужинать в ресторане с парковкой", "labels": {"intent": "find_place", "category_primary": "restaurant", "transport": "driving", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Посоветуй музей на два часа", "labels": {"intent": "find_place", "category_primary": "museum", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Каток с прокатом коньков в 3 ночи", "labels": {"intent": "find_place", "category_primary": "skating_rink", "transport": "unspecified", "open_requirement": "24h"}}
+{"lang": "ru", "query": "Нужно купить цветы и потом в ресторан", "labels": {"intent": "plan_route", "category_primary": "restaurant", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Куплю воды по дороге в парк", "labels": {"intent": "plan_route", "category_primary": "park", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Где смотровая площадка с видом на город", "labels": {"intent": "find_place", "category_primary": "viewpoint", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Халяль кафе недорого", "labels": {"intent": "find_place", "category_primary": "cafe", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Вегетарианский ресторан на левом берегу", "labels": {"intent": "find_place", "category_primary": "restaurant", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Доеду на такси до хорошего кинотеатра", "labels": {"intent": "find_place", "category_primary": "cinema", "transport": "taxi", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Что открыто сейчас, где поесть", "labels": {"intent": "find_place", "category_primary": "cafe", "transport": "unspecified", "open_requirement": "now"}}
+{"lang": "ru", "query": "Пекарня, где можно взять круассан", "labels": {"intent": "find_place", "category_primary": "bakery", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Боулинг для компании из шести человек", "labels": {"intent": "find_place", "category_primary": "bowling", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Где взять велосипед напрокат и покататься", "labels": {"intent": "find_place", "category_primary": "bike_rental", "transport": "bicycle", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Тихая библиотека, где можно позаниматься", "labels": {"intent": "find_place", "category_primary": "library", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Ночной клуб, который работает до утра", "labels": {"intent": "find_place", "category_primary": "nightclub", "transport": "unspecified", "open_requirement": "late"}}
+{"lang": "ru", "query": "Хочу в торговый центр погреться", "labels": {"intent": "find_place", "category_primary": "mall", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Еду на автобусе, где можно перекусить в кафе у остановки", "labels": {"intent": "find_place", "category_primary": "cafe", "transport": "public_transport", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Доехать на самокате до набережной", "labels": {"intent": "find_place", "category_primary": "embankment", "transport": "scooter", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Сувениры для друзей перед отъездом", "labels": {"intent": "find_place", "category_primary": "souvenirs", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Как работает зоопарк сегодня?", "labels": {"intent": "place_info", "category_primary": "zoo", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Квест на вечер для четверых", "labels": {"intent": "find_place", "category_primary": "quest", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Где выпить кофе и зарядить телефон", "labels": {"intent": "find_place", "category_primary": "coffee", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "Караоке, где поют до утра", "labels": {"intent": "find_place", "category_primary": "karaoke", "transport": "unspecified", "open_requirement": "late"}}
+{"lang": "ru", "query": "Чайхана с пловом", "labels": {"intent": "find_place", "category_primary": "chaikhana", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "ru", "query": "ТЦ рядом, пешком минут 10", "labels": {"intent": "find_place", "category_primary": "mall", "transport": "walking", "open_requirement": "unspecified"}}
+{"lang": "kk", "query": "Жақын жерде дәмді кофе қайда?", "labels": {"intent": "find_place", "category_primary": "coffee", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "kk", "query": "Балаға арналған ойын алаңы қай жерде?", "labels": {"intent": "find_place", "category_primary": "playground", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "kk", "query": "Арзан тамақтанатын кафе керек", "labels": {"intent": "find_place", "category_primary": "cafe", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "kk", "query": "Хан Шатырға қалай жетемін?", "labels": {"intent": "navigate_to", "category_primary": "mall", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "kk", "query": "Қазір ашық дәріхана бар ма?", "labels": {"intent": "find_place", "category_primary": "pharmacy", "transport": "unspecified", "open_requirement": "now"}}
+{"lang": "kk", "query": "Саябақта жаяу серуендегім келеді", "labels": {"intent": "find_place", "category_primary": "park", "transport": "walking", "open_requirement": "unspecified"}}
+{"lang": "kk", "query": "Мұражайға барғым келеді, такси шақырамын", "labels": {"intent": "find_place", "category_primary": "museum", "transport": "taxi", "open_requirement": "unspecified"}}
+{"lang": "kk", "query": "Түні бойы ашық тұратын кафе", "labels": {"intent": "find_place", "category_primary": "cafe_24h", "transport": "unspecified", "open_requirement": "24h"}}
+{"lang": "kk", "query": "Бәйтерекке жаяу қалай барамын?", "labels": {"intent": "navigate_to", "category_primary": "viewpoint", "transport": "walking", "open_requirement": "unspecified"}}
+{"lang": "kk", "query": "Кинотеатрға барайық", "labels": {"intent": "find_place", "category_primary": "cinema", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "kk", "query": "Жаңбыр басталады, жабық жер керек", "labels": {"intent": "find_place", "category_primary": "none", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "kk", "query": "Ресторанға бармас бұрын гүл сатып алу керек", "labels": {"intent": "plan_route", "category_primary": "restaurant", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "kk", "query": "Велосипед жалға алатын жер", "labels": {"intent": "find_place", "category_primary": "bike_rental", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "kk", "query": "Жақын жерде халал асхана", "labels": {"intent": "find_place", "category_primary": "canteen", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "en", "query": "Coffee shop with wifi near me", "labels": {"intent": "find_place", "category_primary": "coffee", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "en", "query": "How do I get to Khan Shatyr by bus?", "labels": {"intent": "navigate_to", "category_primary": "mall", "transport": "public_transport", "open_requirement": "unspecified"}}
+{"lang": "en", "query": "Late-night bar open after 1am", "labels": {"intent": "find_place", "category_primary": "bar", "transport": "unspecified", "open_requirement": "late"}}
+{"lang": "en", "query": "Kid-friendly museum for this afternoon", "labels": {"intent": "find_place", "category_primary": "museum", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "en", "query": "I need an umbrella and then a cafe", "labels": {"intent": "plan_route", "category_primary": "cafe", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "en", "query": "24 hour pharmacy", "labels": {"intent": "find_place", "category_primary": "pharmacy", "transport": "unspecified", "open_requirement": "24h"}}
+{"lang": "en", "query": "What time does the Nur Alem museum open?", "labels": {"intent": "place_info", "category_primary": "museum", "transport": "unspecified", "open_requirement": "unspecified"}}
+{"lang": "en", "query": "Take a taxi to a good steakhouse", "labels": {"intent": "find_place", "category_primary": "restaurant", "transport": "taxi", "open_requirement": "unspecified"}}

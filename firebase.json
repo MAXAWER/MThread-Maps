@@ -1,0 +1,25 @@
+{
+  "functions": [
+    {
+      "source": "server",
+      "codebase": "default",
+      "runtime": "python312",
+      "ignore": [
+        "venv",
+        ".venv",
+        "tests",
+        "var",
+        "eval",
+        "scripts",
+        "__pycache__",
+        "**/__pycache__",
+        ".pytest_cache",
+        ".env",
+        ".env.*",
+        "Dockerfile",
+        "requirements-dev.txt",
+        "pytest.ini"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Пин карты с тропинкой: 108×108, безопасная зона 66×66 в центре -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#F2C14E"
+        android:pathData="M54,30c-9.4,0 -17,7.4 -17,16.6c0,12.4 17,31.4 17,31.4s17,-19 17,-31.4C71,37.4 63.4,30 54,30z" />
+    <path
+        android:fillColor="#0E5E73"
+        android:pathData="M54,40.5a6.5,6.5 0,1 1,0 13a6.5,6.5 0,1 1,0 -13z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:pathData="M36,80c6,-3 12,-3 18,0s12,3 18,0" />
+</vector>

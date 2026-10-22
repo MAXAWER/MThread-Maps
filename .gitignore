@@ -1,0 +1,35 @@
+# Секреты
+.env
+*.env
+.env.local
+!.env.example
+.firebase/
+*.log
+local.properties
+*.keystore
+*.jks
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+server/venv/
+.pytest_cache/
+.mypy_cache/
+server/var/
+
+# Android / Gradle
+.gradle/
+build/
+android/app/release/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store

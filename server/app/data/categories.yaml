@@ -1,0 +1,67 @@
+# Справочник категорий (раздел 4 ТЗ).
+# Поля: id, name_ru, name_en, q (запрос в 2ГИС), rubric_ids (заполнить из Categories API 2ГИС),
+# indoor, kids, night, visit_min, group, match (регулярные выражения для сопоставления рубрик 2ГИС),
+# for_groups (подходит компаниям), ambience (quiet | lively | romantic | family | work), free (вход бесплатный).
+# Значения стартовые: visit_min и флаги уточняются на тестовых сценариях.
+
+- {id: coffee, name_ru: Кофейня, name_en: Coffee shop, q: кофейня, rubric_ids: [], indoor: true, kids: false, night: false, visit_min: 30, group: food, match: ['кофейн', 'кофе', 'coffee'], for_groups: false, ambience: [quiet, work, romantic], free: false}
+- {id: cafe, name_ru: Кафе, name_en: Cafe, q: кафе, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 45, group: food, match: ['кафе\b', 'cafe'], for_groups: true, ambience: [family, lively], free: false}
+- {id: restaurant, name_ru: Ресторан, name_en: Restaurant, q: ресторан, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 75, group: food, match: ['ресторан'], for_groups: true, ambience: [romantic, quiet], free: false}
+- {id: fastfood, name_ru: Фастфуд, name_en: Fast food, q: фастфуд, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 20, group: food, match: ['фастфуд', 'быстрого питания', 'бургер', 'шаурм', 'пицц'], for_groups: true, ambience: [lively, family], free: false}
+- {id: canteen, name_ru: Столовая, name_en: Canteen, q: столовая, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 30, group: food, match: ['столов'], for_groups: true, ambience: [], free: false}
+- {id: bakery, name_ru: Пекарня, name_en: Bakery, q: пекарня, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 15, group: food, match: ['пекарн', 'выпечк'], for_groups: false, ambience: [quiet], free: false}
+- {id: confectionery, name_ru: Кондитерская, name_en: Pastry shop, q: кондитерская, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 25, group: food, match: ['кондитер', 'десерт'], for_groups: false, ambience: [romantic, family], free: false}
+- {id: chaikhana, name_ru: Чайхана, name_en: Teahouse, q: чайхана, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 60, group: food, match: ['чайхан', 'чайная'], for_groups: true, ambience: [quiet, family], free: false}
+- {id: bar, name_ru: Бар, name_en: Bar, q: бар, rubric_ids: [], indoor: true, kids: false, night: true, visit_min: 60, group: food, match: ['\bбар(ы|\b)', '\bbar\b'], for_groups: true, ambience: [lively], free: false}
+- {id: pub, name_ru: Паб, name_en: Pub, q: паб, rubric_ids: [], indoor: true, kids: false, night: true, visit_min: 75, group: food, match: ['\bпаб', 'пивн'], for_groups: true, ambience: [lively], free: false}
+
+- {id: museum, name_ru: Музей, name_en: Museum, q: музей, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 60, group: culture, match: ['музе'], for_groups: true, ambience: [quiet], free: false}
+- {id: gallery, name_ru: Галерея, name_en: Art gallery, q: галерея, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 45, group: culture, match: ['галере', 'выставочн'], for_groups: false, ambience: [quiet, romantic], free: false}
+- {id: theatre, name_ru: Театр, name_en: Theatre, q: театр, rubric_ids: [], indoor: true, kids: true, night: true, visit_min: 150, group: culture, match: ['театр', '\bопер', 'балет'], for_groups: true, ambience: [romantic], free: false}
+- {id: cinema, name_ru: Кинотеатр, name_en: Cinema, q: кинотеатр, rubric_ids: [], indoor: true, kids: true, night: true, visit_min: 120, group: culture, match: ['кинотеатр', '\bкино'], for_groups: true, ambience: [romantic, family], free: false}
+- {id: concert_hall, name_ru: Концертный зал, name_en: Concert hall, q: концертный зал, rubric_ids: [], indoor: true, kids: true, night: true, visit_min: 120, group: culture, match: ['концерт', 'филармон'], for_groups: true, ambience: [romantic, lively], free: false}
+- {id: library, name_ru: Библиотека, name_en: Library, q: библиотека, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 60, group: culture, match: ['библиотек'], for_groups: false, ambience: [quiet, work], free: true}
+- {id: monument, name_ru: Памятник, name_en: Monument, q: памятник, rubric_ids: [], indoor: false, kids: true, night: false, visit_min: 15, group: culture, match: ['памятник', 'монумент', 'скульптур'], for_groups: true, ambience: [romantic], free: true}
+- {id: architecture, name_ru: Архитектурный объект, name_en: Landmark building, q: достопримечательность, rubric_ids: [], indoor: false, kids: true, night: false, visit_min: 20, group: culture, match: ['достопримечат', 'архитектур'], for_groups: true, ambience: [romantic], free: true}
+
+- {id: park, name_ru: Парк, name_en: Park, q: парк, rubric_ids: [], indoor: false, kids: true, night: false, visit_min: 45, group: walks, match: ['\bпарк(?!овк)', '\bpark\b'], for_groups: true, ambience: [quiet, family, romantic], free: true}
+- {id: square, name_ru: Сквер, name_en: Public garden, q: сквер, rubric_ids: [], indoor: false, kids: true, night: false, visit_min: 20, group: walks, match: ['сквер'], for_groups: true, ambience: [quiet], free: true}
+- {id: embankment, name_ru: Набережная, name_en: Embankment, q: набережная, rubric_ids: [], indoor: false, kids: true, night: false, visit_min: 40, group: walks, match: ['набережн'], for_groups: true, ambience: [romantic, lively], free: true}
+- {id: botanical_garden, name_ru: Ботанический сад, name_en: Botanical garden, q: ботанический сад, rubric_ids: [], indoor: false, kids: true, night: false, visit_min: 60, group: walks, match: ['ботаническ'], for_groups: true, ambience: [quiet, family], free: true}
+- {id: viewpoint, name_ru: Смотровая площадка, name_en: Viewpoint, q: смотровая площадка, rubric_ids: [], indoor: false, kids: true, night: false, visit_min: 20, group: walks, match: ['смотров'], for_groups: true, ambience: [romantic], free: false}
+- {id: pedestrian_street, name_ru: Пешеходная улица, name_en: Pedestrian street, q: пешеходная улица, rubric_ids: [], indoor: false, kids: true, night: false, visit_min: 30, group: walks, match: ['пешеходн', 'бульвар', 'аллея'], for_groups: true, ambience: [lively, romantic], free: true}
+
+- {id: playground, name_ru: Детская площадка, name_en: Playground, q: детская площадка, rubric_ids: [], indoor: false, kids: true, night: false, visit_min: 30, group: kids, match: ['детская площадка', 'игровая площадка'], for_groups: false, ambience: [family], free: true}
+- {id: kids_center, name_ru: Детский развлекательный центр, name_en: Kids entertainment center, q: детский развлекательный центр, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 90, group: kids, match: ['детск\w* развлекат', 'детский центр', 'игров\w* комнат'], for_groups: true, ambience: [family, lively], free: false}
+- {id: zoo, name_ru: Зоопарк, name_en: Zoo, q: зоопарк, rubric_ids: [], indoor: false, kids: true, night: false, visit_min: 90, group: kids, match: ['зоопарк', 'контактный зоо'], for_groups: true, ambience: [family], free: false}
+- {id: oceanarium, name_ru: Океанариум, name_en: Aquarium, q: океанариум, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 75, group: kids, match: ['океанариум', 'аквариум'], for_groups: true, ambience: [family], free: false}
+- {id: interactive_museum, name_ru: Интерактивный музей, name_en: Interactive museum, q: интерактивный музей, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 60, group: kids, match: ['интерактив'], for_groups: true, ambience: [family], free: false}
+
+- {id: mall, name_ru: Торговый центр, name_en: Shopping mall, q: торговый центр, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 60, group: shopping, match: ['торгов\w* центр', '\bтрц\b', '\bтц\b', '\bмолл'], for_groups: true, ambience: [lively, family], free: true}
+- {id: supermarket, name_ru: Супермаркет, name_en: Supermarket, q: супермаркет, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 15, group: shopping, match: ['супермаркет', 'гипермаркет', 'продукт'], for_groups: false, ambience: [], free: false}
+- {id: bookstore, name_ru: Книжный магазин, name_en: Bookstore, q: книжный магазин, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 30, group: shopping, match: ['книжн'], for_groups: false, ambience: [quiet], free: false}
+- {id: souvenirs, name_ru: Сувениры, name_en: Souvenir shop, q: сувениры, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 20, group: shopping, match: ['сувенир'], for_groups: false, ambience: [], free: false}
+- {id: market, name_ru: Рынок, name_en: Market, q: рынок, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 40, group: shopping, match: ['рынок', 'рынки', 'базар'], for_groups: true, ambience: [lively], free: false}
+
+- {id: bowling, name_ru: Боулинг, name_en: Bowling, q: боулинг, rubric_ids: [], indoor: true, kids: true, night: true, visit_min: 90, group: fun, match: ['боулинг'], for_groups: true, ambience: [lively], free: false}
+- {id: billiards, name_ru: Бильярд, name_en: Billiards, q: бильярд, rubric_ids: [], indoor: true, kids: false, night: true, visit_min: 90, group: fun, match: ['бильярд'], for_groups: true, ambience: [lively], free: false}
+- {id: quest, name_ru: Квест, name_en: Escape room, q: квест, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 75, group: fun, match: ['квест'], for_groups: true, ambience: [lively], free: false}
+- {id: karaoke, name_ru: Караоке, name_en: Karaoke, q: караоке, rubric_ids: [], indoor: true, kids: false, night: true, visit_min: 120, group: fun, match: ['караоке'], for_groups: true, ambience: [lively], free: false}
+- {id: vr_club, name_ru: VR-клуб, name_en: VR club, q: vr клуб, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 60, group: fun, match: ['\bvr\b', 'виртуальн'], for_groups: true, ambience: [lively], free: false}
+- {id: attractions, name_ru: Аттракционы, name_en: Amusement rides, q: аттракционы, rubric_ids: [], indoor: false, kids: true, night: false, visit_min: 60, group: fun, match: ['аттракцион', 'аквапарк', 'парк развлечен'], for_groups: true, ambience: [family, lively], free: false}
+- {id: skating_rink, name_ru: Каток, name_en: Ice rink, q: каток, rubric_ids: [], indoor: false, kids: true, night: false, visit_min: 75, group: fun, match: ['каток', 'катки', 'ледов'], for_groups: true, ambience: [lively, family], free: false}
+
+- {id: fitness, name_ru: Фитнес-клуб, name_en: Gym, q: фитнес, rubric_ids: [], indoor: true, kids: false, night: false, visit_min: 75, group: sport, match: ['фитнес', 'тренажер', 'спортзал'], for_groups: false, ambience: [], free: false}
+- {id: pool, name_ru: Бассейн, name_en: Swimming pool, q: бассейн, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 90, group: sport, match: ['бассейн'], for_groups: true, ambience: [family], free: false}
+- {id: climbing, name_ru: Скалодром, name_en: Climbing gym, q: скалодром, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 90, group: sport, match: ['скалодром'], for_groups: true, ambience: [lively], free: false}
+- {id: bike_rental, name_ru: Прокат велосипедов и самокатов, name_en: Bike and scooter rental, q: прокат велосипедов, rubric_ids: [], indoor: false, kids: true, night: false, visit_min: 60, group: sport, match: ['прокат\w* (вело|самокат)'], for_groups: true, ambience: [lively], free: false}
+
+- {id: nightclub, name_ru: Ночной клуб, name_en: Nightclub, q: ночной клуб, rubric_ids: [], indoor: true, kids: false, night: true, visit_min: 180, group: night, match: ['ночн\w* клуб'], for_groups: true, ambience: [lively], free: false}
+- {id: lounge, name_ru: Лаунж, name_en: Lounge bar, q: лаунж, rubric_ids: [], indoor: true, kids: false, night: true, visit_min: 90, group: night, match: ['лаунж', 'кальян'], for_groups: true, ambience: [quiet, romantic], free: false}
+- {id: cafe_24h, name_ru: Круглосуточное кафе, name_en: 24-hour cafe, q: круглосуточное кафе, rubric_ids: [], indoor: true, kids: true, night: true, visit_min: 45, group: night, match: ['круглосуточн'], for_groups: true, ambience: [lively], free: false}
+
+- {id: pharmacy, name_ru: Аптека, name_en: Pharmacy, q: аптека, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 10, group: services, match: ['аптек'], for_groups: false, ambience: [], free: false}
+- {id: atm, name_ru: Банкомат, name_en: ATM, q: банкомат, rubric_ids: [], indoor: true, kids: true, night: true, visit_min: 5, group: services, match: ['банкомат'], for_groups: false, ambience: [], free: false}
+- {id: mobile_store, name_ru: Салон связи, name_en: Mobile store, q: салон связи, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 15, group: services, match: ['салон\w* связи', 'сотов', 'мобильн'], for_groups: false, ambience: [], free: false}
+- {id: flowers, name_ru: Цветы, name_en: Flower shop, q: цветы, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 10, group: services, match: ['цвет'], for_groups: false, ambience: [], free: false}
+- {id: public_toilet, name_ru: Общественный туалет, name_en: Public toilet, q: общественный туалет, rubric_ids: [], indoor: true, kids: true, night: false, visit_min: 5, group: services, match: ['туалет'], for_groups: false, ambience: [], free: false}
