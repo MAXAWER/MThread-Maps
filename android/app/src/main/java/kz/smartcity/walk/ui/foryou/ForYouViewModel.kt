@@ -17,7 +17,13 @@ import kz.smartcity.walk.data.api.PlaceCard
 import kz.smartcity.walk.data.db.SavedPlace
 import kz.smartcity.walk.data.repo.DeckItem
 
+/** Открыта ли вкладка: число поисков и выбранные вручную интересы. */
+data class ForYouGate(val searches: Int, val interests: Set<String>) {
+    val unlocked get() = searches >= ForYouViewModel.UNLOCK_SEARCHES || interests.size >= ForYouViewModel.MIN_INTERESTS
+}
+
 class ForYouViewModel(private val g: AppGraph) : ViewModel() {
+    val gate = MutableStateFlow(ForYouGate(g.settings.searchCount, g.settings.interests))
     val cards: StateFlow<List<DeckItem>> = g.deck.cards.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val saved: StateFlow<List<SavedPlace>> = g.deck.saved.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val busy = MutableStateFlow(false)
@@ -25,7 +31,22 @@ class ForYouViewModel(private val g: AppGraph) : ViewModel() {
     val lastLiked = MutableStateFlow<DeckItem?>(null)
 
     init {
-        if (g.deck.isStale(System.currentTimeMillis())) refresh(force = false)
+        if (gate.value.unlocked && g.deck.isStale(System.currentTimeMillis())) refresh(force = false)
+    }
+
+    fun reloadGate() {
+        gate.value = ForYouGate(g.settings.searchCount, g.settings.interests)
+    }
+
+    /** Выбор на полотне пузырьков: задаёт стартовые веса категорий и сразу пересобирает колоду. */
+    fun saveInterests(chosen: Set<String>) {
+        val before = g.settings.interests
+        g.settings.interests = chosen
+        reloadGate()
+        viewModelScope.launch {
+            g.profile.seedInterests(added = chosen - before, removed = before - chosen, nowMs = System.currentTimeMillis())
+            if (gate.value.unlocked) refresh(force = true)
+        }
     }
 
     fun refresh(force: Boolean) {
@@ -74,6 +95,12 @@ class ForYouViewModel(private val g: AppGraph) : ViewModel() {
     fun routeToSaved(p: SavedPlace) {
         g.intents.tryEmit(AppIntent.RouteTo(AnswerItem(poiId = p.poiId, name = p.name, category = p.category, lat = p.lat, lon = p.lon,
             transport = g.settings.defaultTransport), startNavigation = false))
+    }
+
+    companion object {
+        /** «Несколько десятков поисковых запросов». */
+        const val UNLOCK_SEARCHES = 30
+        const val MIN_INTERESTS = 10
     }
 
     class Factory(private val g: AppGraph) : ViewModelProvider.Factory {

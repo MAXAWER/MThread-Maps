@@ -556,36 +556,32 @@ async def resolve_filters(req: SearchRequest, svc: Services, weather: dict | Non
 
 
 async def stream_search(req: SearchRequest, svc: Services) -> AsyncIterator[str]:
-    from .planner import plan_mode  # циклический импорт: planner использует функции этого модуля
-
     request_id = uuid.uuid4().hex[:12]
     t0 = time.perf_counter()
     timings: dict[str, int] = {}
     lang = req.lang or detect_lang(req.query)
     weather_task = asyncio.create_task(svc.weather.get(req.lat, req.lon, req.local_time))
     try:
-        # Погода из кэша приходит сразу; холодный запрос не задерживает чипы Jev дольше 0,6 с.
-        weather = await _await_weather(weather_task, 0.6)
-        t = time.perf_counter()
-        f = await resolve_filters(req, svc, weather, lang)
-        timings["filters_ms"] = int((time.perf_counter() - t) * 1000)
-        transport = f.transport or req.transport_hint or "walking"
-        chips = build_chips(f, svc.catalog)
-        yield sse("filters", {"filters": f.model_dump(), "chips": [c.model_dump() for c in chips],
-                              "transport": transport})
-        if weather is None:
+        # Основной режим — агент Sonnet 5.5: сам ищет, сравнивает и проверяет места и поездки.
+        # Фильтры, правленные в приложении, и отказ агента ведут в прежний конвейер ниже.
+        if svc.settings.agent_enabled and hasattr(svc.llm, "agent_loop") and req.filters is None:
+            from .agent import agent_mode  # циклический импорт: агент использует функции этого модуля
+
             weather = await _await_weather(weather_task, 2.5)
-        timings["weather_ms"] = int((time.perf_counter() - t0) * 1000)
-        ctx = Ctx(req=req, svc=svc, filters=f, transport=transport, weather=weather, now=req.local_time,
-                  lang=lang, timings=timings)
-        if f.intent in ("navigate_to", "place_info"):
-            pipeline = place_mode(ctx)
-        elif is_plan_mode(f):
-            pipeline = plan_mode(ctx)
+            t = time.perf_counter()
+            answered = False
+            async for event, data in agent_mode(req, svc, weather, lang):
+                if event == "fallback":
+                    yield sse("progress", {"text": "Нейросеть не ответила — подбираю быстрым способом"})
+                    break
+                answered = answered or event == "answer"
+                yield sse(event, data)
+            timings["agent_ms"] = int((time.perf_counter() - t) * 1000)
         else:
-            pipeline = simple_mode(ctx)
-        async for event, data in pipeline:
-            yield sse(event, data)
+            answered = False
+        if not answered:
+            async for event in _pipeline_events(req, svc, weather_task, lang, timings, t0):
+                yield event
     except DgisError as exc:
         log.warning("search %s: 2gis error: %s", request_id, exc)
         yield sse("error", {"code": "places_unavailable", "message": "Справочник 2ГИС сейчас недоступен. Попробуйте ещё раз."})
@@ -600,6 +596,34 @@ async def stream_search(req: SearchRequest, svc: Services) -> AsyncIterator[str]
     brief = weather_brief(weather_task.result()) if weather_task.done() and not weather_task.cancelled() \
         and weather_task.exception() is None else None
     yield sse("done", {"request_id": request_id, "timings": timings, "weather": brief})
+
+
+async def _pipeline_events(req: SearchRequest, svc: Services, weather_task: asyncio.Task, lang: str,
+                           timings: dict, t0: float) -> AsyncIterator[str]:
+    """Прежний конвейер: Jev → кандидаты → ответ Haiku. Запасной путь, если агент не ответил."""
+    from .planner import plan_mode  # циклический импорт: planner использует функции этого модуля
+
+    # Погода из кэша приходит сразу; холодный запрос не задерживает чипы Jev дольше 0,6 с.
+    weather = await _await_weather(weather_task, 0.6)
+    t = time.perf_counter()
+    f = await resolve_filters(req, svc, weather, lang)
+    timings["filters_ms"] = int((time.perf_counter() - t) * 1000)
+    transport = f.transport or req.transport_hint or "walking"
+    chips = build_chips(f, svc.catalog)
+    yield sse("filters", {"filters": f.model_dump(), "chips": [c.model_dump() for c in chips], "transport": transport})
+    if weather is None:
+        weather = await _await_weather(weather_task, 2.5)
+    timings["weather_ms"] = int((time.perf_counter() - t0) * 1000)
+    ctx = Ctx(req=req, svc=svc, filters=f, transport=transport, weather=weather, now=req.local_time,
+              lang=lang, timings=timings)
+    if f.intent in ("navigate_to", "place_info"):
+        pipeline = place_mode(ctx)
+    elif is_plan_mode(f):
+        pipeline = plan_mode(ctx)
+    else:
+        pipeline = simple_mode(ctx)
+    async for event, data in pipeline:
+        yield sse(event, data)
 
 
 async def _await_weather(task: asyncio.Task, timeout: float) -> dict | None:

@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .config import Settings
 from .deck import build_deck
-from .dgis import DgisError
+from .dgis import DgisError, label_route_options
 from .geo import round_coord
 from .models import ASTANA_TZ, DeckRequest, NotifyRequest, ProfileUpdateRequest, RouteOut, RouteRequest, SearchRequest
 from .notify import notify_candidates
@@ -221,7 +221,7 @@ async def route(req: RouteRequest, _: str = Depends(install_id), svc: Services =
     return RouteOut(transport=transport, total_distance_m=data["total_distance_m"],
                     total_duration_s=data["total_duration_s"], geometry=data["geometry"],
                     maneuvers=data["maneuvers"], source=data.get("source", "routing"),
-                    note=note or data.get("note"))
+                    note=note or data.get("note"), options=label_route_options(data))
 
 
 @app.post("/v1/deck")

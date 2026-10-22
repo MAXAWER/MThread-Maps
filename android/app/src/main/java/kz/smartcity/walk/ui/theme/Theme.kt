@@ -1,93 +1,134 @@
 package kz.smartcity.walk.ui.theme
 
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// Палитра: яркие плоские цвета без градиентов — насыщенный синий, солнечно-жёлтый, сочный зелёный
-// на чистом светлом фоне. Контраст текста ≥ 4,5:1.
+/*
+ * Палитра Material 3 от фирменного синего #1F6BFF: полный набор ролей, включая контейнеры поверхностей.
+ * Текст всегда берёт «on»-цвет своей поверхности — контраст ≥ 4,5:1 в обеих темах.
+ * Жёлтый (secondary) — акцент «Хочу» и номеров рекомендаций, зелёный (tertiary) — «открыто», подтверждения.
+ */
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF1F6BFF),
+    primary = Color(0xFF1F5FD0),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFDCE7FF),
-    onPrimaryContainer = Color(0xFF00205C),
+    primaryContainer = Color(0xFFDAE2FF),
+    onPrimaryContainer = Color(0xFF001946),
+    inversePrimary = Color(0xFFB1C5FF),
     secondary = Color(0xFFFFC400),
-    onSecondary = Color(0xFF1F1600),
-    secondaryContainer = Color(0xFFFFF1BF),
+    onSecondary = Color(0xFF261A00),
+    secondaryContainer = Color(0xFFFFEDB3),
     onSecondaryContainer = Color(0xFF3D2E00),
-    tertiary = Color(0xFF00B37E),
+    tertiary = Color(0xFF00875F),
     onTertiary = Color.White,
-    tertiaryContainer = Color(0xFFCCF5E6),
-    onTertiaryContainer = Color(0xFF00382A),
-    background = Color(0xFFF2F4F8),
-    onBackground = Color(0xFF101828),
-    surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF101828),
-    surfaceVariant = Color(0xFFE8ECF4),
-    onSurfaceVariant = Color(0xFF475467),
-    outline = Color(0xFF98A2B3),
-    error = Color(0xFFF04438),
-    errorContainer = Color(0xFFFEE4E2),
-    onErrorContainer = Color(0xFF7A271A),
+    tertiaryContainer = Color(0xFFB4F1D5),
+    onTertiaryContainer = Color(0xFF002116),
+    background = Color(0xFFF9F9FF),
+    onBackground = Color(0xFF1A1B21),
+    surface = Color(0xFFF9F9FF),
+    onSurface = Color(0xFF1A1B21),
+    surfaceVariant = Color(0xFFE1E2EC),
+    onSurfaceVariant = Color(0xFF44474F),
+    surfaceTint = Color(0xFF1F5FD0),
+    inverseSurface = Color(0xFF2F3036),
+    inverseOnSurface = Color(0xFFF0F0F7),
+    surfaceBright = Color(0xFFF9F9FF),
+    surfaceDim = Color(0xFFD9D9E0),
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = Color(0xFFF3F3FA),
+    surfaceContainer = Color(0xFFEDEDF4),
+    surfaceContainerHigh = Color(0xFFE7E8EE),
+    surfaceContainerHighest = Color(0xFFE2E2E9),
+    outline = Color(0xFF74777F),
+    outlineVariant = Color(0xFFC4C6D0),
+    error = Color(0xFFBA1A1A),
+    onError = Color.White,
+    errorContainer = Color(0xFFFFDAD6),
+    onErrorContainer = Color(0xFF410002),
+    scrim = Color.Black,
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF6E9BFF),
-    onPrimary = Color(0xFF00205C),
-    primaryContainer = Color(0xFF1B3E8F),
-    onPrimaryContainer = Color(0xFFDCE7FF),
+    primary = Color(0xFFB1C5FF),
+    onPrimary = Color(0xFF002C70),
+    primaryContainer = Color(0xFF1B43A0),
+    onPrimaryContainer = Color(0xFFDAE2FF),
+    inversePrimary = Color(0xFF1F5FD0),
     secondary = Color(0xFFFFD34D),
-    onSecondary = Color(0xFF1F1600),
+    onSecondary = Color(0xFF261A00),
     secondaryContainer = Color(0xFF5C4600),
-    onSecondaryContainer = Color(0xFFFFF1BF),
-    tertiary = Color(0xFF3DDC97),
+    onSecondaryContainer = Color(0xFFFFE08A),
+    tertiary = Color(0xFF5DDBA8),
     onTertiary = Color(0xFF00382A),
-    tertiaryContainer = Color(0xFF00573F),
-    onTertiaryContainer = Color(0xFFCCF5E6),
-    background = Color(0xFF0E1116),
-    onBackground = Color(0xFFE6EAF2),
-    surface = Color(0xFF181C24),
-    onSurface = Color(0xFFE6EAF2),
-    surfaceVariant = Color(0xFF242A36),
-    onSurfaceVariant = Color(0xFFB8C0D0),
-    outline = Color(0xFF7A8499),
-    error = Color(0xFFFF8A80),
-    errorContainer = Color(0xFF8C1D18),
-    onErrorContainer = Color(0xFFFEE4E2),
+    tertiaryContainer = Color(0xFF005139),
+    onTertiaryContainer = Color(0xFFB4F1D5),
+    background = Color(0xFF111318),
+    onBackground = Color(0xFFE2E2E9),
+    surface = Color(0xFF111318),
+    onSurface = Color(0xFFE2E2E9),
+    surfaceVariant = Color(0xFF44474F),
+    onSurfaceVariant = Color(0xFFC4C6D0),
+    surfaceTint = Color(0xFFB1C5FF),
+    inverseSurface = Color(0xFFE2E2E9),
+    inverseOnSurface = Color(0xFF2F3036),
+    surfaceBright = Color(0xFF37393E),
+    surfaceDim = Color(0xFF111318),
+    surfaceContainerLowest = Color(0xFF0C0E13),
+    surfaceContainerLow = Color(0xFF1A1B21),
+    surfaceContainer = Color(0xFF1E1F25),
+    surfaceContainerHigh = Color(0xFF282A2F),
+    surfaceContainerHighest = Color(0xFF33353A),
+    outline = Color(0xFF8E9099),
+    outlineVariant = Color(0xFF44474F),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+    errorContainer = Color(0xFF93000A),
+    onErrorContainer = Color(0xFFFFDAD6),
+    scrim = Color.Black,
 )
 
-// Сильные скругления для всех компонентов Material.
+// Крупные скругления Material 3 Expressive.
 private val AppShapes = Shapes(
-    extraSmall = RoundedCornerShape(14.dp),
-    small = RoundedCornerShape(20.dp),
-    medium = RoundedCornerShape(28.dp),
-    large = RoundedCornerShape(36.dp),
-    extraLarge = RoundedCornerShape(44.dp),
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(20.dp),
+    large = RoundedCornerShape(28.dp),
+    extraLarge = RoundedCornerShape(36.dp),
 )
 
 private val AppTypography = Typography().run {
     copy(
-        headlineLarge = headlineLarge.copy(fontWeight = FontWeight.Black, letterSpacing = (-0.5).sp),
-        headlineMedium = headlineMedium.copy(fontWeight = FontWeight.Black, letterSpacing = (-0.4).sp),
-        headlineSmall = headlineSmall.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.3).sp),
-        titleLarge = titleLarge.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.2).sp),
-        titleMedium = titleMedium.copy(fontWeight = FontWeight.Bold),
+        headlineLarge = headlineLarge.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp),
+        headlineMedium = headlineMedium.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.3).sp),
+        headlineSmall = headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+        titleLarge = titleLarge.copy(fontWeight = FontWeight.SemiBold),
+        titleMedium = titleMedium.copy(fontWeight = FontWeight.SemiBold),
         labelLarge = labelLarge.copy(fontWeight = FontWeight.SemiBold),
-        bodyMedium = bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
     )
 }
 
+/** [dynamicColor] — цвета из обоев (Material You, Android 12+); иначе фирменная палитра. */
 @Composable
-fun WalkTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = if (dark) DarkColors else LightColors, typography = AppTypography, shapes = AppShapes,
-        content = content)
+fun WalkTheme(dark: Boolean = isSystemInDarkTheme(), dynamicColor: Boolean = false, content: @Composable () -> Unit) {
+    val context = LocalContext.current
+    val colors = when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
+            if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        dark -> DarkColors
+        else -> LightColors
+    }
+    MaterialTheme(colorScheme = colors, typography = AppTypography, shapes = AppShapes, content = content)
 }

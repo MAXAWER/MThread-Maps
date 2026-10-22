@@ -70,6 +70,17 @@ class ProfileRepository(private val db: AppDatabase, private val json: Json) {
         if (category != null) bumpCounter(category, alpha = 2.0, nowMs = nowMs)
     }
 
+    /**
+     * Ручной выбор интересов — сильный стартовый сигнал (α+3), снятый выбор его убирает. Дальше веса
+     * сдвигают поиски и свайпы, так что рекомендации меняются вместе с поведением.
+     */
+    suspend fun seedInterests(added: Set<String>, removed: Set<String>, nowMs: Long) {
+        added.forEach { bumpCounter(it, alpha = SEED, nowMs = nowMs) }
+        removed.forEach { cat ->
+            dao.counter(cat)?.let { dao.upsertCounter(it.copy(alpha = (it.alpha - SEED).coerceAtLeast(1.0), updatedMs = nowMs)) }
+        }
+    }
+
     suspend fun affinity(): Map<String, Double> =
         dao.counters().associate { it.category to ProfileMath.affinity(it.alpha, it.beta) }
 
@@ -129,6 +140,7 @@ class ProfileRepository(private val db: AppDatabase, private val json: Json) {
     }
 
     companion object {
+        private const val SEED = 3.0
         val KEY_LABELS = mapOf(
             "cuisine" to "кухня", "ambience" to "атмосфера", "price_level" to "цены", "time_pattern" to "привычное время",
             "transport_default" to "транспорт", "company" to "компания", "walk_tolerance" to "прогулка",

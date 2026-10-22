@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -165,11 +166,16 @@ def parse_place(item: dict, catalog: Catalog, rank: int = 0) -> Place | None:
 
 
 def parse_route(data: dict) -> dict:
-    """Ответ Routing API → геометрия и манёвры. Формат манёвров сверить в первый день (раздел 7)."""
+    """Ответ Routing API → основной вариант (геометрия и манёвры) и все альтернативы в options."""
     results = data.get("result") or []
     if not results:
         raise DgisError(data.get("message") or data.get("status") or "route not found")
-    res = results[0]
+    options = [_route_result(res) | {"id": str(i)} for i, res in enumerate(results)]
+    return {**options[0], "options": options}
+
+
+def _route_result(res: dict) -> dict:
+    """Один вариант Routing API: геометрия и манёвры. Формат манёвров сверен по ответам 2ГИС (раздел 7)."""
     geometry: list[list[float]] = []
     maneuvers: list[dict] = []
     begin: list[str] = []
@@ -220,52 +226,120 @@ def _collect_selections(node, out: list[str]) -> None:
             _collect_selections(v, out)
 
 
-def parse_public_transport(data, origin: tuple[float, float]) -> dict:
-    """Ответ Public Transport API → линия маршрута и этапы. Формат сверить в первый день."""
+def label_route_options(data: dict) -> list[dict]:
+    """Варианты маршрута с подписями: самый быстрый, меньше пешком, разница во времени с лучшим."""
+    options = [dict(o) for o in data.get("options") or []] or [{
+        "id": "0", "total_distance_m": data["total_distance_m"], "total_duration_s": data["total_duration_s"],
+        "geometry": data["geometry"], "maneuvers": data["maneuvers"]}]
+    best = min(o["total_duration_s"] for o in options)
+    walks = [sum(leg["distance_m"] for leg in o.get("legs") or [] if leg["kind"] == "walk") for o in options]
+    least_walk = walks.index(min(walks)) if any(o.get("legs") for o in options) else -1
+    for i, o in enumerate(options):
+        if o["total_duration_s"] == best:
+            o["label"] = "Быстрее всего"
+        elif i == least_walk:
+            o["label"] = "Меньше пешком"
+        else:
+            o["label"] = f"+{max(1, round((o['total_duration_s'] - best) / 60))} мин"
+    return options
+
+
+PT_MAX_OPTIONS = 6
+
+
+def parse_public_transport(data, origin: tuple[float, float], now_utc: float | None = None) -> dict:
+    """Ответ Public Transport API → основной вариант и до 6 вариантов в options.
+
+    Вариант — этапы (пешком, автобус и т. п.) с номерами маршрутов, их цветом, остановками посадки и выхода,
+    промежуточными остановками с координатами и временем ближайшего отправления по расписанию.
+    """
     variants = data if isinstance(data, list) else (data.get("result") or data.get("routes") or [])
     if not variants:
         raise DgisError("public transport route not found")
-    v = variants[0]
-    selections: list[str] = []
-    _collect_selections(v.get("movements") or v, selections)
+    options = [_pt_variant(v, origin, now_utc) | {"id": str(v.get("id") or i)} for i, v in enumerate(variants[:PT_MAX_OPTIONS])]
+    return {**options[0], "options": options}
+
+
+def _pt_variant(v: dict, origin: tuple[float, float], now_utc: float | None) -> dict:
+    movements = v.get("movements") or []
     geometry: list[list[float]] = []
-    for s in selections:
-        coords = parse_wkt(s)
-        geometry.extend(coords[1:] if geometry and coords and geometry[-1] == coords[0] else coords)
     steps: list[dict] = []
+    legs: list[dict] = []
     cursor = [origin[1], origin[0]]
-    for mv in v.get("movements") or []:
+    for i, mv in enumerate(movements):
         wp = mv.get("waypoint") or {}
+        nxt = (movements[i + 1].get("waypoint") or {}) if i + 1 < len(movements) else {}
         routes = mv.get("routes") or []
-        names = ", ".join(n for r in routes for n in (r.get("names") or []))
+        names = [n for r in routes for n in (r.get("names") or [])]
         kind = mv.get("type")
-        if kind == "walkway":
-            text = f"Пешком до «{wp.get('name') or 'остановки'}»"
-        elif names:
-            text = f"{_pt_subtype(routes)} {names} до «{wp.get('name') or 'остановки'}»"
-        else:
-            text = wp.get("name") or "Дальше по маршруту"
+        alt = (mv.get("alternatives") or [{}])[0]
         mv_sel: list[str] = []
-        _collect_selections(mv, mv_sel)
+        _collect_selections(alt.get("geometry") or mv.get("geometry") or [], mv_sel)
         mv_coords = [c for s in mv_sel for c in parse_wkt(s)]
+        if mv_coords:
+            geometry.extend(mv_coords[1:] if geometry and geometry[-1] == mv_coords[0] else mv_coords)
         point = mv_coords[0] if mv_coords else cursor
         if mv_coords:
             cursor = mv_coords[-1]
-        steps.append({
-            "text": text,
-            "icon": kind,
-            "type": kind,
-            "turn_direction": None,
-            "lat": point[1],
-            "lon": point[0],
+        to_name = nxt.get("name") if nxt.get("subtype") != "finish" else "цели"
+        if kind == "walkway" or not routes:
+            if not mv.get("distance"):
+                continue  # нулевой этап: финиш или пересадка на той же остановке
+            text = f"Пешком до «{to_name or 'остановки'}»"
+            leg_kind = "walk"
+        else:
+            text = f"{_pt_subtype(routes)} {', '.join(names)} до «{to_name or 'остановки'}»" if names else (to_name or "Дальше")
+            leg_kind = ((routes[0].get("subtype") if routes else None) or "transit").lower()
+        steps.append({"text": text, "icon": kind, "type": kind, "turn_direction": None, "lat": point[1], "lon": point[0],
+                      "distance_m": int(mv.get("distance") or 0),
+                      "duration_s": int(mv.get("moving_duration") or mv.get("duration") or 0)})
+        stops: list[dict] = []
+        if leg_kind != "walk":
+            pts = [parse_wkt(p.get("geometry") or "") for p in alt.get("platforms") or []]
+            pts = [p[0] for p in pts if p]
+            mid_names = list((mv.get("platforms") or {}).get("names") or []) if isinstance(mv.get("platforms"), dict) else []
+            for j, (lon, lat) in enumerate(pts):
+                if j == 0:
+                    name = wp.get("name")
+                elif j == len(pts) - 1:
+                    name = nxt.get("name")
+                else:
+                    name = mid_names[j - 1] if len(mid_names) == len(pts) - 2 else None
+                stops.append({"lat": lat, "lon": lon, "name": name})
+        legs.append({
+            "kind": leg_kind,
+            "names": names,
+            "color": (routes[0].get("color") if routes else None),
+            "from_name": wp.get("name") if wp.get("subtype") != "start" else None,
+            "to_name": to_name,
+            "duration_s": int(mv.get("moving_duration") or 0),
+            "wait_s": int(mv.get("waiting_duration") or 0),
             "distance_m": int(mv.get("distance") or 0),
-            "duration_s": int(mv.get("moving_duration") or mv.get("duration") or 0),
+            "geometry": mv_coords,
+            "stops": stops,
         })
+    if geometry:
+        steps.append({"text": "Вы на месте", "icon": "finish", "type": "end", "turn_direction": None,
+                      "lat": geometry[-1][1], "lon": geometry[-1][0], "distance_m": 0, "duration_s": 0})
+    # Расписание: precise — ближайшие отправления по времени, periodic — только интервал движения.
+    schedules = v.get("schedules") or []
+    precise = [s for s in schedules if s.get("type") == "precise" and s.get("precise_time")]
+    periodic = next((s for s in schedules if s.get("type") == "periodic" and s.get("period")), None)
+    departure_in = None
+    if precise and precise[0].get("start_time_utc") and now_utc is not None:
+        departure_in = max(0, round((float(precise[0]["start_time_utc"]) - now_utc) / 60))
     return {
         "total_distance_m": int(v.get("total_distance") or 0),
         "total_duration_s": int(v.get("total_duration") or 0),
         "geometry": geometry,
         "maneuvers": steps,
+        "legs": legs,
+        "transfers": v.get("transfer_count"),
+        "walk_text": v.get("total_walkway_distance"),
+        "departure": precise[0]["precise_time"] if precise else None,
+        "departure_in_min": departure_in,
+        "next_departures": [s["precise_time"] for s in precise[1:4]],
+        "interval_min": int(periodic["period"]) if periodic and not precise else None,
     }
 
 
@@ -451,7 +525,15 @@ class DgisClient:
         }
         if transport in ("driving", "taxi"):
             body["traffic_mode"] = "jam"
-        data = await self._post("routing", f"{self._s.dgis_routing_url}/routing/7.0.0/global", body, timeout=8.0)
+        if len(points) == 2:
+            body["alternative"] = 2  # до двух альтернатив к основному варианту
+        # Квота демо-ключа 2ГИС мала: тот же маршрут (точки с точностью ~10 м) 10 минут берём из кэша —
+        # агент, повторные открытия шторки и смена вариантов не тратят запросы.
+        key = ("route", transport, tuple((round(lat, 4), round(lon, 4)) for lat, lon in points))
+        data = self._short_cache.get(key)
+        if data is None:
+            data = await self._post("routing", f"{self._s.dgis_routing_url}/routing/7.0.0/global", body, timeout=8.0)
+            self._short_cache.set(key, data)
         out = parse_route(data)
         out["source"] = "routing"
         return out
@@ -463,8 +545,13 @@ class DgisClient:
             "target": {"name": "Финиш", "point": {"lat": b[0], "lon": b[1]}},
             "transport": ["bus", "trolleybus", "tram", "shuttle_bus", "metro", "light_rail"],
         }
-        data = await self._post("public_transport", f"{self._s.dgis_routing_url}/public_transport/2.0", body,
-                                timeout=8.0)
-        out = parse_public_transport(data, a)
+        # Ответ кэшируется, а разбирается каждый раз заново: «через N минут» считается от текущего времени.
+        key = ("public_transport", round(a[0], 4), round(a[1], 4), round(b[0], 4), round(b[1], 4))
+        data = self._short_cache.get(key)
+        if data is None:
+            data = await self._post("public_transport", f"{self._s.dgis_routing_url}/public_transport/2.0", body,
+                                    timeout=8.0)
+            self._short_cache.set(key, data)
+        out = parse_public_transport(data, a, now_utc=time.time())
         out["source"] = "public_transport"
         return out

@@ -76,6 +76,12 @@ class Settings:
     planner_model: str = "claude-sonnet-5-5"
     planner_effort: str = "medium"
     planner_fallback: bool = True
+    # Агент подбора на Sonnet 5.5: сам ищет, сравнивает и проверяет места и варианты поездки.
+    agent_enabled: bool = True
+    agent_model: str = "claude-sonnet-5-5"
+    agent_effort: str = "high"
+    agent_max_tool_calls: int = 8
+    agent_timeout_s: float = 110.0
     answer_effort: str = "medium"
     answer_timeout_s: float = 15.0
     planner_timeout_s: float = 10.0
@@ -157,6 +163,11 @@ class Settings:
             planner_model=_str("PLANNER_MODEL", cls.planner_model),
             planner_effort=_str("PLANNER_EFFORT", "medium"),
             planner_fallback=_bool("PLANNER_FALLBACK", True),
+            agent_enabled=_bool("AGENT_ENABLED", True),
+            agent_model=_str("AGENT_MODEL", cls.agent_model),
+            agent_effort=_str("AGENT_EFFORT", "high"),
+            agent_max_tool_calls=_int("AGENT_MAX_TOOL_CALLS", 8),
+            agent_timeout_s=_float("AGENT_TIMEOUT_S", 110.0),
             answer_effort=_str("ANSWER_EFFORT", "medium"),
             answer_timeout_s=_float("ANSWER_TIMEOUT_S", 15.0),
             planner_timeout_s=_float("PLANNER_TIMEOUT_S", 10.0),

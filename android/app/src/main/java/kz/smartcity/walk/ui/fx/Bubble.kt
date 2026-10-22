@@ -4,10 +4,12 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
-import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
@@ -58,8 +60,8 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** Слои отдалённости от экрана: чем ближе слой, тем больше и цветнее тень. */
-enum class Depth(val elevation: Dp) { FLOOR(0.dp), LOW(6.dp), FLOAT(12.dp), SHEET(26.dp), MODAL(34.dp) }
+/** Слои отдалённости от экрана (уровни высоты Material 3): чем ближе слой, тем больше тень. */
+enum class Depth(val elevation: Dp) { FLOOR(0.dp), LOW(1.dp), FLOAT(3.dp), SHEET(6.dp), MODAL(8.dp) }
 
 object BubbleShapes {
     val XS = RoundedCornerShape(16.dp)
@@ -84,12 +86,13 @@ object Fills {
     @Composable
     fun tertiary(): Brush = SolidColor(MaterialTheme.colorScheme.tertiary)
 
+    /** Карточки и шторки — контейнер поверхности Material 3: отличается от фона в обеих темах. */
     @Composable
-    fun surface(): Brush = SolidColor(MaterialTheme.colorScheme.surface)
+    fun surface(): Brush = SolidColor(MaterialTheme.colorScheme.surfaceContainerLow)
 
-    /** Полупрозрачная поверхность над картой. */
+    /** Поверхность над картой: высокий контейнер, при alpha < 1 — полупрозрачный. */
     @Composable
-    fun glass(alpha: Float = 0.92f): Brush = SolidColor(MaterialTheme.colorScheme.surface.copy(alpha = alpha))
+    fun glass(alpha: Float = 0.92f): Brush = SolidColor(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = alpha))
 
     /** Светлая плашка цвета: фон для пилюль и значков. */
     @Composable
@@ -107,7 +110,7 @@ fun Modifier.bubble(
     glow: Color = Color(0xFF101828),
 ): Modifier = this
     .then(if (depth.elevation > 0.dp) Modifier.shadow(depth.elevation, shape, clip = false,
-        ambientColor = glow.copy(alpha = 0.16f), spotColor = glow.copy(alpha = 0.26f)) else Modifier)
+        ambientColor = glow.copy(alpha = 0.20f), spotColor = glow.copy(alpha = 0.30f)) else Modifier)
     .clip(shape)
     .background(fill)
 
@@ -189,11 +192,12 @@ fun BubbleButton(
     }
 }
 
-/** Вторичная кнопка: светлый пузырь. */
+/** Вторичная кнопка — тональная (Material 3 Filled tonal): контейнер primaryContainer. */
 @Composable
 fun BubbleGhostButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, content: @Composable RowScope.() -> Unit) =
-    BubbleButton(onClick, modifier, fill = Fills.surface(), contentColor = MaterialTheme.colorScheme.primary,
-        glow = MaterialTheme.colorScheme.primary, enabled = enabled, depth = Depth.LOW, content = content)
+    BubbleButton(onClick, modifier, fill = SolidColor(MaterialTheme.colorScheme.primaryContainer),
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer, glow = MaterialTheme.colorScheme.primary,
+        enabled = enabled, depth = Depth.FLOOR, content = content)
 
 /** Круглая кнопка-пузырь с иконкой. */
 @Composable
@@ -247,7 +251,8 @@ fun BubbleChip(
             .pressPhysics(interaction, squash = 0.9f)
             .bubble(BubbleShapes.Pill,
                 if (selected) SolidColor(accent) else Fills.surface(),
-                Depth.LOW, glow = glowFor(accent))
+                Depth.FLOOR, glow = glowFor(accent))
+            .then(if (selected) Modifier else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, BubbleShapes.Pill))
             .clickable(interaction, indication = null, role = Role.Button) {
                 haptics?.tick(0.45f)
                 onClick()
@@ -268,7 +273,10 @@ fun BubbleChip(
     }
 }
 
-/** Карточка-пузырь: наклон к пальцу и пружинный отскок. */
+/**
+ * Карточка: поверхность Material 3 со своим цветом текста ([contentColor]) — текст без явного цвета
+ * берёт «on»-цвет карточки, а не чёрный по умолчанию, поэтому читается и в тёмной теме.
+ */
 @Composable
 fun BubbleCard(
     modifier: Modifier = Modifier,
@@ -277,31 +285,34 @@ fun BubbleCard(
     shape: Shape = BubbleShapes.L,
     depth: Depth = Depth.LOW,
     glow: Color = MaterialTheme.colorScheme.primary,
-    tiltDeg: Float = 3.5f,
+    tiltDeg: Float = 2f,
+    contentColor: Color = MaterialTheme.colorScheme.onSurface,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val haptics = LocalHaptics.current
     val interaction = remember { MutableInteractionSource() }
-    Column(
-        modifier = modifier
-            .then(if (onClick != null) Modifier.pressPhysics(interaction, tiltDeg = tiltDeg, squash = 0.97f) else Modifier)
-            .bubble(shape, fill, depth, glow = glowFor(glow))
-            .then(if (onClick != null) Modifier.clickable(interaction, indication = null) { haptics?.tap(); onClick() } else Modifier),
-        content = content,
-    )
+    CompositionLocalProvider(LocalContentColor provides contentColor) {
+        Column(
+            modifier = modifier
+                .then(if (onClick != null) Modifier.pressPhysics(interaction, tiltDeg = tiltDeg, squash = 0.98f) else Modifier)
+                .bubble(shape, fill, depth, glow = glowFor(glow))
+                .then(if (onClick != null) Modifier.clickable(interaction, indication = null) { haptics?.tap(); onClick() } else Modifier),
+            content = content,
+        )
+    }
 }
 
-/** Появление «лопающимся пузырём» с задержкой по порядку. */
+/** Появление элемента списка: короткое проявление со сдвигом снизу, без перелёта — стабильно и плавно. */
 @Composable
 fun PopIn(index: Int, content: @Composable () -> Unit) {
     val state = remember { MutableTransitionState(false) }
     LaunchedEffect(Unit) {
-        delay(index * 70L)
+        delay(index * 40L)
         state.targetState = true
     }
     AnimatedVisibility(
         visibleState = state,
-        enter = scaleIn(spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow), initialScale = 0.82f) + fadeIn(),
+        enter = fadeIn(tween(220)) + slideInVertically(spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow)) { it / 6 },
     ) { content() }
 }
 

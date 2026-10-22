@@ -59,7 +59,7 @@ class JevFilters(BaseModel):
     group_size: int | None = None
     needs_return: bool = False
     raw_text_search: bool = False
-    source: Literal["jev", "client", "none", "demo"] = "jev"
+    source: Literal["jev", "client", "none", "demo", "agent"] = "jev"
 
 
 class Chip(BaseModel):
@@ -158,6 +158,10 @@ class Answer(BaseModel):
     plan: Plan | None = None
     note: str | None = None
     data_source: Literal["2gis", "demo"] = "2gis"
+    summary: str | None = None            # итог агента одной фразой
+    understood: list[str] = Field(default_factory=list)  # как агент понял запрос
+    route: dict | None = None             # маршрут к первому месту (RouteOut), если просили «как добраться»
+    route_option_id: str | None = None    # выбранный агентом вариант маршрута
 
 
 class PlacePoint(BaseModel):
@@ -187,7 +191,46 @@ class Maneuver(BaseModel):
     duration_s: int = 0
 
 
+class RouteStop(BaseModel):
+    lat: float
+    lon: float
+    name: str | None = None
+
+
+class RouteLeg(BaseModel):
+    """Этап варианта: walk — пешком, bus/trolleybus/tram/… — поездка с номерами маршрутов и остановками."""
+
+    kind: str
+    names: list[str] = Field(default_factory=list)
+    color: str | None = None
+    from_name: str | None = None
+    to_name: str | None = None
+    duration_s: int = 0
+    wait_s: int = 0
+    distance_m: int = 0
+    geometry: list[list[float]] = Field(default_factory=list)
+    stops: list[RouteStop] = Field(default_factory=list)
+
+
+class RouteOption(BaseModel):
+    id: str
+    label: str | None = None
+    total_distance_m: int
+    total_duration_s: int
+    geometry: list[list[float]]
+    maneuvers: list[Maneuver]
+    legs: list[RouteLeg] = Field(default_factory=list)
+    transfers: int | None = None
+    walk_text: str | None = None
+    departure: str | None = None          # ближайшее отправление по расписанию, «13:52»
+    departure_in_min: int | None = None
+    next_departures: list[str] = Field(default_factory=list)  # следующие отправления
+    interval_min: int | None = None       # если точного расписания нет — интервал движения
+
+
 class RouteOut(BaseModel):
+    """Основной вариант — в верхних полях (их берёт навигатор), все варианты — в options."""
+
     transport: str
     total_distance_m: int
     total_duration_s: int
@@ -196,6 +239,7 @@ class RouteOut(BaseModel):
     source: Literal["routing", "public_transport", "demo", "estimate"]
     deeplink: str | None = None
     note: str | None = None
+    options: list[RouteOption] = Field(default_factory=list)
 
 
 class DeckRequest(GeoRequest):

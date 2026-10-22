@@ -9,7 +9,7 @@ plugins {
     alias(libs.plugins.room)
 }
 
-// Локальные настройки (не в git): api.baseUrl, map.baseUrl
+// Локальные настройки (не в git): api.baseUrl
 val localProps = Properties().apply {
     val f = rootProject.file("local.properties")
     if (f.exists()) f.inputStream().use { load(it) }
@@ -24,11 +24,10 @@ android {
         applicationId = "kz.smartcity.walk"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "API_BASE_URL", "\"${local("api.baseUrl", "http://10.0.2.2:8080")}\"")
-        buildConfigField("String", "MAP_BASE_URL", "\"${local("map.baseUrl", "https://walk.smartcity.local/")}\"")
     }
 
     buildTypes {
@@ -89,6 +88,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.play.services.location)
+    implementation(libs.haze)
+    implementation(libs.haze.materials)
 
     testImplementation(libs.junit)
 }

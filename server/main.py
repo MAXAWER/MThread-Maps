@@ -38,7 +38,7 @@ def _wsgi_app() -> ASGIMiddleware:
     cpu=1,
     concurrency=40,
     max_instances=5,
-    timeout_sec=120,
+    timeout_sec=300,  # агент Sonnet думает и вызывает инструменты до ~2 минут
     secrets=SECRETS,
     invoker="public",
 )

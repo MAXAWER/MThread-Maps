@@ -29,6 +29,8 @@ sealed interface SearchEvent {
     data class AnswerEv(val data: Answer) : SearchEvent
     data class Error(val data: ErrorEvent) : SearchEvent
     data class Done(val data: DoneEvent) : SearchEvent
+    /** Шаг агента: «Ищу: университет», «Проверяю, как добраться…». */
+    data class Progress(val text: String) : SearchEvent
 }
 
 /** Клиент своего сервера. Приложение обращается только к нему (кроме тайлов MapGL). */
@@ -49,6 +51,12 @@ class ApiClient(private val baseUrl: () -> String, private val installId: () -> 
         .callTimeout(90, TimeUnit.SECONDS)
         .build()
 
+    /** Поток поиска: агент думает и вызывает инструменты до пары минут, между шагами приходят события прогресса. */
+    private val sse = http.newBuilder()
+        .readTimeout(150, TimeUnit.SECONDS)
+        .callTimeout(0, TimeUnit.SECONDS)
+        .build()
+
     private val jsonType = "application/json; charset=utf-8".toMediaType()
 
     private fun request(path: String) = Request.Builder()
@@ -57,7 +65,7 @@ class ApiClient(private val baseUrl: () -> String, private val installId: () -> 
 
     fun search(req: SearchRequest): Flow<SearchEvent> = callbackFlow {
         val body = json.encodeToString(SearchRequest.serializer(), req).toRequestBody(jsonType)
-        val call = http.newCall(request("/v1/search").post(body).header("Accept", "text/event-stream").build())
+        val call = sse.newCall(request("/v1/search").post(body).header("Accept", "text/event-stream").build())
         val job = launch(Dispatchers.IO) {
             try {
                 call.execute().use { resp ->
@@ -101,6 +109,7 @@ class ApiClient(private val baseUrl: () -> String, private val installId: () -> 
             "answer" -> SearchEvent.AnswerEv(json.decodeFromString(Answer.serializer(), data))
             "error" -> SearchEvent.Error(json.decodeFromString(ErrorEvent.serializer(), data))
             "done" -> SearchEvent.Done(json.decodeFromString(DoneEvent.serializer(), data))
+            "progress" -> SearchEvent.Progress(json.decodeFromString(ProgressEvent.serializer(), data).text)
             else -> null
         }
     }.getOrNull()

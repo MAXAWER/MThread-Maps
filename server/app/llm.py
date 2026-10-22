@@ -172,6 +172,69 @@ class ClaudeService:
         except json.JSONDecodeError:
             return None
 
+    async def agent_loop(self, user_payload: dict, execute: ToolExecutor, on_turn=None) -> dict | None:
+        """Агент Sonnet 5.5 с инструментами 2ГИС. Возвращает вход submit_answer или None.
+
+        Адаптивное мышление включено у модели по умолчанию, глубину задаёт effort. tool_choice — только auto
+        (принудительный выбор инструмента Sonnet 5.5 отклоняет). В историю добавляется весь content ответа.
+        """
+        messages: list[dict] = [{"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)}]
+        system = [{"type": "text", "text": prompts.AGENT_SYSTEM, "cache_control": {"type": "ephemeral"}}]
+        max_calls = self._s.agent_max_tool_calls
+        calls = 0
+        nudged = False
+
+        async def run() -> dict | None:
+            nonlocal calls, nudged
+            for _ in range(max_calls + 4):
+                if on_turn:
+                    await on_turn(calls)
+                resp = await self._sonnet(
+                    model=self._s.agent_model,
+                    max_tokens=16000,
+                    system=system,
+                    tools=prompts.AGENT_TOOLS,
+                    tool_choice={"type": "auto"},
+                    messages=messages,
+                    output_config={"effort": self._s.agent_effort},
+                )
+                log.info("agent turn: stop=%s in=%s out=%s", resp.stop_reason, resp.usage.input_tokens,
+                         resp.usage.output_tokens)
+                if resp.stop_reason == "refusal":
+                    return None
+                uses = [b for b in resp.content if b.type == "tool_use"]
+                submit = next((u for u in uses if u.name == "submit_answer"), None)
+                if submit is not None:
+                    return dict(submit.input)
+                messages.append({"role": "assistant", "content": resp.content})
+                if not uses:
+                    if nudged:
+                        return None
+                    nudged = True
+                    messages.append({"role": "user", "content": "Заверши ответ вызовом submit_answer."})
+                    continue
+                results = []
+                for use in uses:
+                    calls += 1
+                    if calls > max_calls:
+                        out, is_error = {"error": "Лимит вызовов исчерпан. Вызови submit_answer по найденному."}, True
+                    else:
+                        try:
+                            out, is_error = await execute(use.name, dict(use.input)), False
+                        except Exception as exc:  # инструмент не должен ронять цикл
+                            log.warning("agent tool %s failed: %s", use.name, exc)
+                            out, is_error = {"error": f"Инструмент недоступен: {type(exc).__name__}"}, True
+                    results.append({"type": "tool_result", "tool_use_id": use.id,
+                                    "content": json.dumps(out, ensure_ascii=False), "is_error": is_error})
+                messages.append({"role": "user", "content": results})
+            return None
+
+        try:
+            return await asyncio.wait_for(run(), timeout=self._s.agent_timeout_s)
+        except (asyncio.TimeoutError, anthropic.APIError) as exc:
+            log.warning("agent loop failed: %s", exc)
+            return None
+
     async def plan_tool_loop(self, user_payload: dict, tools: list[dict], execute: ToolExecutor,
                              max_calls: int = 6) -> str | None:
         """Цикл инструментов Sonnet: tool_choice auto, strict-схемы, не больше max_calls вызовов."""

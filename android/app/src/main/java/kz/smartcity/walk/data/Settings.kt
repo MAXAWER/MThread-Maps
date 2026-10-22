@@ -62,6 +62,16 @@ class Settings(context: Context) {
     fun notificationsToday(today: LocalDate): Int =
         if (prefs.getString("notif_day", "") == today.toString()) prefs.getInt("notif_count", 0) else 0
 
+    /** Сколько ИИ-поисков сделано: после нескольких десятков открывается вкладка «Для вас». */
+    var searchCount: Int
+        get() = prefs.getInt("search_count", 0)
+        set(v) = prefs.edit { putInt("search_count", v) }
+
+    /** Интересы, выбранные вручную на полотне пузырьков (id категорий). */
+    var interests: Set<String>
+        get() = prefs.getStringSet("interests", emptySet())?.toSet() ?: emptySet()
+        set(v) = prefs.edit { putStringSet("interests", v) }
+
     var lastDeckRefreshMs: Long
         get() = prefs.getLong("deck_refresh_ms", 0)
         set(v) = prefs.edit { putLong("deck_refresh_ms", v) }

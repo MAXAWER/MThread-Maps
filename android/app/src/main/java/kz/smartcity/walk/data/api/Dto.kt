@@ -122,7 +122,15 @@ data class Answer(
     val plan: Plan? = null,
     val note: String? = null,
     val dataSource: String = "2gis",
+    val summary: String? = null,
+    val understood: List<String> = emptyList(),
+    /** Маршрут к первому месту, если агента просили «как добраться». */
+    val route: RouteResponse? = null,
+    val routeOptionId: String? = null,
 )
+
+@Serializable
+data class ProgressEvent(val text: String = "")
 
 @Serializable
 data class ErrorEvent(val code: String = "error", val message: String = "Ошибка")
@@ -213,6 +221,49 @@ data class RouteResponse(
     val source: String,
     val deeplink: String? = null,
     val note: String? = null,
+    val options: List<RouteOption> = emptyList(),
+) {
+    /** Маршрут по выбранному варианту: его линию и манёвры берёт навигатор. */
+    fun withOption(id: String?): RouteResponse {
+        val o = options.firstOrNull { it.id == id } ?: return this
+        return copy(totalDistanceM = o.totalDistanceM, totalDurationS = o.totalDurationS, geometry = o.geometry,
+            maneuvers = o.maneuvers)
+    }
+}
+
+@Serializable
+data class RouteStop(val lat: Double, val lon: Double, val name: String? = null)
+
+/** Этап варианта: walk — пешком, bus/trolleybus/tram/… — поездка с номерами маршрутов и остановками. */
+@Serializable
+data class RouteLeg(
+    val kind: String,
+    val names: List<String> = emptyList(),
+    val color: String? = null,
+    val fromName: String? = null,
+    val toName: String? = null,
+    val durationS: Int = 0,
+    val waitS: Int = 0,
+    val distanceM: Int = 0,
+    val geometry: List<List<Double>> = emptyList(),
+    val stops: List<RouteStop> = emptyList(),
+)
+
+@Serializable
+data class RouteOption(
+    val id: String,
+    val label: String? = null,
+    val totalDistanceM: Int,
+    val totalDurationS: Int,
+    val geometry: List<List<Double>> = emptyList(),
+    val maneuvers: List<Maneuver> = emptyList(),
+    val legs: List<RouteLeg> = emptyList(),
+    val transfers: Int? = null,
+    val walkText: String? = null,
+    val departure: String? = null,
+    val departureInMin: Int? = null,
+    val nextDepartures: List<String> = emptyList(),
+    val intervalMin: Int? = null,
 )
 
 @Serializable
