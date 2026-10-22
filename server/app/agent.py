@@ -199,7 +199,7 @@ class SearchAgent:
             return {"error": "место не найдено"}
         self.places[p.id] = p
         await self.emit(("progress", {"text": f"Смотрю подробности: {p.name}"}))
-        return {"id": p.id, "name": p.name, "rubrics": p.rubrics, "address": p.address, "schedule": p.schedule,
+        return {"id": p.id, "name": p.name, "menu_page": _menu_page(p), "rubrics": p.rubrics, "address": p.address, "schedule": p.schedule,
                 "attributes": p.attribute_labels, "phone": p.phone, "website": p.website, "avg_check_tenge": p.avg_check,
                 "rating": p.rating, "reviews": p.reviews, "branches": p.branch_count}
 
@@ -317,6 +317,12 @@ class SearchAgent:
                       summary=_trim(result.get("summary"), 300), understood=[str(u)[:40] for u in (result.get("understood") or [])[:5]],
                       route=route_out, route_option_id=route_opt, remember=remember, plan=plan,
                       note=None if items else (_trim(result.get("summary"), 300) or "Подходящих мест не нашлось."))
+
+
+def _menu_page(p: Place) -> str | None:
+    """Страница цен и меню места в 2ГИС — первое, что стоит прочитать через web_fetch."""
+    firm = p.id.split("_")[0]
+    return f"https://2gis.kz/astana/firm/{firm}/tab/prices" if firm.isdigit() else None
 
 
 def _url(value) -> str | None:
