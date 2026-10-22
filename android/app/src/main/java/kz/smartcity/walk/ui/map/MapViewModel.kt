@@ -38,6 +38,12 @@ import kz.smartcity.walk.data.api.SearchRequest
 import kz.smartcity.walk.data.api.SuggestItem
 import kz.smartcity.walk.data.iso
 import kz.smartcity.walk.nav.NavDestination
+import kz.smartcity.walk.nav.NavState
+import kz.smartcity.walk.data.Categories
+import kz.smartcity.walk.data.QuickPlace
+import kz.smartcity.walk.data.QuickPlaces
+import kz.smartcity.walk.data.api.RememberOffer
+import kz.smartcity.walk.data.api.SavedPlaceIn
 import kz.smartcity.walk.nav.NavigationService
 import kz.smartcity.walk.walk.WalkDetector
 import kz.smartcity.walk.walk.WalkService
@@ -84,7 +90,14 @@ data class MapUiState(
     val selectedOptionId: String? = null,
     /** Открыта строка ввода над клавиатурой (кнопка-кружок «расплылась» в строку). */
     val composing: Boolean = false,
+    /** Подсказки запросов под этого человека: время суток, интересы, недавние запросы. */
+    val hints: List<Hint> = emptyList(),
+    /** ИИ предложил запомнить место — ждём согласия. */
+    val remember: RememberOffer? = null,
 )
+
+/** Подсказка запроса: текст и ключ иконки. */
+data class Hint(val text: String, val icon: String)
 
 /** Центр Астаны — если геолокации нет. */
 private val CITY_CENTER = LatLng(51.128, 71.430)
@@ -119,6 +132,17 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
         return loc ?: _state.value.myLocation ?: CITY_CENTER
     }
 
+    /** Живая точка на карте, пока открыта вкладка карты: раз в 2 с, экономный режим. */
+    suspend fun trackLocation() {
+        try {
+            g.location.updates(2_000L).collect { loc ->
+                _state.update { it.copy(myLocation = LatLng(loc.latitude, loc.longitude), usingCityCenter = false) }
+            }
+        } catch (_: SecurityException) {
+            // нет разрешения — остаётся последняя известная точка
+        }
+    }
+
     fun setSimulateNavigation(on: Boolean) = _state.update { it.copy(simulateNavigation = on) }
 
     fun onQueryChange(text: String) {
@@ -142,7 +166,93 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
 
     fun clearSuggestions() = _state.update { it.copy(suggestions = emptyList()) }
 
-    fun openComposer() = _state.update { it.copy(composing = true) }
+    fun openComposer() {
+        _state.update { it.copy(composing = true) }
+        viewModelScope.launch {
+            val h = buildHints()
+            _state.update { it.copy(hints = h) }
+        }
+    }
+
+    /**
+     * Подсказки собираются на телефоне из данных о человеке: недавние запросы, сильные интересы (ручной выбор и
+     * портрет), время суток и день недели. Без запросов к серверу — появляются мгновенно.
+     */
+    private suspend fun buildHints(): List<Hint> {
+        val now = g.settings.now()
+        val out = mutableListOf<Hint>()
+        g.places.recent.value.take(2).forEach { out += Hint(it, "history") }
+        val h = now.hour
+        out += when (h) {
+            in 6..10 -> Hint("Кофе и завтрак рядом", "coffee")
+            in 11..14 -> Hint("Бизнес-ланч рядом до 3000 ₸", "food")
+            in 15..17 -> Hint("Десерт и кофе поблизости", "coffee")
+            in 18..21 -> Hint("Где поужинать сегодня", "food")
+            else -> Hint("Что открыто сейчас рядом", "night")
+        }
+        val weekend = now.dayOfWeek.value >= 6
+        val affinity = g.profile.affinity()
+        val interests = (g.settings.interests.toList() + affinity.entries.sortedByDescending { it.value }.map { it.key })
+            .distinct().filter { it in Categories.all && it !in Categories.notForDeck }
+            // Ночные места (клубы, бары) — только вечером и ночью.
+            .filter { h !in 6..17 || Categories.all[it]?.night != true }
+        interests.take(2).forEach { cat ->
+            out += Hint("${Categories.plural(cat).replaceFirstChar { it.uppercase() }} рядом", "cat:$cat")
+        }
+        if (weekend) out += Hint("Куда сходить на выходных", "star")
+        if (h in 16..20) out += Hint("Прогулка на закате", "walk")
+        if (out.size < 6) out += Hint("Как добраться на автобусе до Байтерека", "bus")
+        return out.distinctBy { it.text.lowercase() }.take(7)
+    }
+
+    val quickPlaces get() = g.places.items
+
+    /** Быстрый маршрут: сразу маршрут к сохранённому месту привычным транспортом. */
+    fun routeToQuick(q: QuickPlace) {
+        _state.update { it.copy(composing = false, query = "") }
+        routeTo(Target("saved:${q.id}", q.name, q.lat, q.lon), transport = g.settings.defaultTransport)
+    }
+
+    fun acceptRemember() {
+        val r = _state.value.remember ?: return
+        val icon = r.icon.takeIf { it in QuickPlaces.ICONS } ?: "star"
+        g.places.upsert(QuickPlace(name = r.name, icon = icon, address = r.address, lat = r.lat, lon = r.lon))
+        _state.update { it.copy(remember = null) }
+    }
+
+    fun dismissRemember() = _state.update { it.copy(remember = null) }
+
+    /**
+     * Отправка из строки ввода. Имя сохранённого места («домой», «к брату») — сразу маршрут; адрес — мгновенно через
+     * подсказки 2ГИС без ИИ; всё остальное — поиск ИИ.
+     */
+    fun submit(text: String) {
+        val q = text.trim()
+        if (q.isEmpty()) return
+        val low = q.lowercase()
+        g.places.items.value.firstOrNull { p -> low == p.name.lowercase() || low.removePrefix("к ").removePrefix("в ") == p.name.lowercase() ||
+            (low.startsWith("домой") && p.icon == "home") }?.let { routeToQuick(it); return }
+        if (looksLikeAddress(q)) {
+            _state.update { it.copy(composing = false, query = "", suggestions = emptyList()) }
+            viewModelScope.launch {
+                val at = (_state.value.myLocation ?: CITY_CENTER).rounded()
+                val top = try { g.api.suggest(q, at.lat, at.lon).items.firstOrNull { it.lat != null && it.lon != null && it.type != "rubric" } }
+                    catch (_: ApiException) { null }
+                if (top != null) pickSuggestion(top) else search(q)
+            }
+            return
+        }
+        search(q)
+    }
+
+    /** «Кенесары 40», «ул. Сыганак 10/1», «пр. Мангилик Ел, 55» — улица с номером дома. */
+    private fun looksLikeAddress(q: String): Boolean {
+        val low = q.lowercase()
+        val street = Regex("""\b(ул\.?|улица|пр\.?|просп\.?|проспект|шоссе|бульвар|б-р|мкр\.?|микрорайон|переулок|пер\.?|көшесі|даңғылы|жк)\b""")
+        val house = Regex("""\d+[а-яa-z]?(/\d+)?\s*$""")
+        return low.split(' ').size <= 6 && (street.containsMatchIn(low) && Regex("""\d""").containsMatchIn(low) ||
+            house.containsMatchIn(low) && !Regex("""(до|за|на|час|мин|₸|тг|тенге|руб|человек|лет)\b""").containsMatchIn(low))
+    }
 
     fun closeComposer() = _state.update { it.copy(composing = false, suggestions = emptyList()) }
 
@@ -173,6 +283,7 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
                 progress = emptyList(), selectedOptionId = null)
         }
         if (filters == null) g.settings.searchCount += 1
+        if (filters == null) g.places.addRecent(query)
         val newCtx = SearchCtx(query, filters, emptyList())
         ctx = newCtx
         searchJob = viewModelScope.launch {
@@ -184,6 +295,10 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
                 transportHint = if (walk.state == WalkDetector.State.WALKING) walk.transport else g.settings.defaultTransport,
                 walkActive = walk.state == WalkDetector.State.WALKING,
                 profileSummary = g.profile.summary(nowMs), profileAffinity = g.profile.affinity(), filters = filters,
+                // Сохранённые места — чтобы «поехали к брату» понимал и ИИ (координаты с точностью ~10 м).
+                savedPlaces = g.places.items.value.map { p ->
+                    SavedPlaceIn(p.name, p.address, Math.round(p.lat * 1e4) / 1e4, Math.round(p.lon * 1e4) / 1e4)
+                },
             )
             g.api.search(req).collect { ev ->
                 when (ev) {
@@ -222,7 +337,8 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
             "plan" -> SheetMode.PLAN
             else -> SheetMode.RESULTS
         }
-        _state.update { it.copy(answer = a, dataSource = a.dataSource, sheet = sheet, hiddenVisited = hidden) }
+        val offer = a.remember?.takeIf { r -> g.places.items.value.none { it.name.equals(r.name, ignoreCase = true) } }
+        _state.update { it.copy(answer = a, dataSource = a.dataSource, sheet = sheet, hiddenVisited = hidden, remember = offer) }
         val first = a.items.firstOrNull()
         val route = a.route
         when {
@@ -483,6 +599,35 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
             }
         }
         return MapLayers(markers = markers, lines = lines, stops = stops)
+    }
+
+    /**
+     * Слои навигации: пройденные этапы бледнеют, текущий — ярче и толще; у поездок — все остановки, посадка и выход
+     * подписаны. Без этапов (пешком, авто) — одна линия маршрута.
+     */
+    fun navLayers(nav: NavState, primary: Color, walk: Color): MapLayers {
+        val dest = MapMarker(nav.dest.poiId, nav.dest.lat, nav.dest.lon, "dest")
+        if (nav.legs.isEmpty()) {
+            return MapLayers(markers = listOf(dest), lines = listOfNotNull(nav.geometry.takeIf { it.size > 1 }?.let { MapLine(it, primary) }),
+                user = nav.position)
+        }
+        val lines = mutableListOf<MapLine>()
+        val stops = mutableListOf<MapStop>()
+        nav.legs.forEachIndexed { i, leg ->
+            val passed = i < nav.legIndex
+            val alpha = if (passed) 0.35f else 1f
+            if (leg.isWalk) {
+                lines += MapLine(leg.line, walk, width = if (i == nav.legIndex) 6.dp else 5.dp, dashed = true, alpha = alpha)
+            } else {
+                val color = parseColor(leg.color) ?: primary
+                lines += MapLine(leg.line, color, width = if (i == nav.legIndex) 9.dp else 7.dp, alpha = alpha)
+                if (!passed) leg.stops.forEachIndexed { k, st ->
+                    val edge = k == 0 || k == leg.stops.lastIndex
+                    stops += MapStop(st.lat, st.lon, color, major = edge, name = if (edge) leg.stopNames.getOrNull(k) else null)
+                }
+            }
+        }
+        return MapLayers(markers = listOf(dest), lines = lines, stops = stops, user = nav.position)
     }
 
     private fun List<List<Double>>.toLatLng() = mapNotNull { p -> if (p.size >= 2) LatLng(p[1], p[0]) else null }

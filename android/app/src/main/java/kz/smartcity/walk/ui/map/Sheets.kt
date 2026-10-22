@@ -1,5 +1,7 @@
 package kz.smartcity.walk.ui.map
 
+import androidx.compose.foundation.clickable
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
@@ -166,7 +168,8 @@ fun ResultsSheet(s: MapUiState, vm: MapViewModel) {
     }
 }
 
-/** Шаги агента по мере работы: выполненные — с галочкой, текущий — с индикатором. */
+/** Шаги агента по мере работы: выполненные — с галочкой, текущий — с выразительным индикатором Material 3. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun AgentProgress(steps: List<String>) {
     Card(
@@ -177,14 +180,14 @@ private fun AgentProgress(steps: List<String>) {
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.AutoAwesome, contentDescription = null)
+                androidx.compose.material3.LoadingIndicator(Modifier.size(36.dp))
                 Text("  Нейросеть Claude думает и проверяет варианты", style = MaterialTheme.typography.titleSmall)
             }
-            LinearProgressIndicator(Modifier.fillMaxWidth().clip(CircleShape))
+            androidx.compose.material3.LinearWavyProgressIndicator(Modifier.fillMaxWidth())
             steps.forEachIndexed { i, step ->
                 val last = i == steps.lastIndex
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (last) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    if (last) androidx.compose.material3.CircularWavyProgressIndicator(Modifier.size(16.dp))
                     else Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
                     Text("  $step", style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
@@ -257,6 +260,8 @@ fun RecommendationCard(n: Int, item: AnswerItem, dataSource: String, onClick: ()
             }
             RatingText(item.rating, item.reviews)
             item.why?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+            // Проверено в интернете: позиции меню с ценами и прочие факты — с источником.
+            if (item.evidence.isNotEmpty()) EvidenceBlock(item.evidence)
             item.visitMin?.let {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Schedule, contentDescription = null, modifier = Modifier.size(16.dp),
@@ -316,7 +321,11 @@ private fun IdeaCard(text: String) {
 fun PlanSheet(s: MapUiState, vm: MapViewModel, onOpen2gis: (Target) -> Unit) {
     val plan = s.answer?.plan ?: return
     SheetList {
-        item { SheetHeader("План маршрута", onClose = vm::closeSheet, subtitle = "Всего около ${plan.totalMin} мин") }
+        item {
+            val finish = plan.legs.lastOrNull()?.leaveAt?.let { " · закончите к $it" } ?: ""
+            SheetHeader("Маршрут по ${plan.legs.size} точкам", onClose = vm::closeSheet, subtitle = "Всего около ${plan.totalMin} мин$finish")
+        }
+        s.answer?.summary?.let { sm -> item { SummaryCard(sm) } }
         itemsIndexed(plan.legs) { i, leg ->
             val last = i == plan.legs.lastIndex
             Row(Modifier.padding(horizontal = 18.dp), verticalAlignment = Alignment.Top) {
@@ -329,13 +338,24 @@ fun PlanSheet(s: MapUiState, vm: MapViewModel, onOpen2gis: (Target) -> Unit) {
                 Card(onClick = { vm.onMarkerClick(leg.to) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) {
                     Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                        Text(leg.purpose.replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(leg.purpose.replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+                            leg.arriveAt?.let { a ->
+                                Text(a + (leg.leaveAt?.let { "–$it" } ?: ""), style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold)
+                            }
+                        }
                         Text(leg.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(transportIcon(leg.transport), contentDescription = transportLabel(leg.transport), modifier = Modifier.size(16.dp))
-                            Text("${leg.etaMin} мин", style = MaterialTheme.typography.bodySmall)
+                            Text("${leg.etaMin} мин в пути" + (leg.distanceM?.let { " · ${formatDistance(it)}" } ?: ""),
+                                style = MaterialTheme.typography.bodySmall)
                             OpenStateText(leg.openState, leg.openUntil)
+                        }
+                        leg.visitMin?.let {
+                            Text("На месте ~$it мин", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -569,6 +589,26 @@ private fun LegChip(leg: RouteLeg) {
         Row(Modifier.padding(horizontal = 8.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.DirectionsBus, contentDescription = null, modifier = Modifier.size(16.dp))
             Text(" ${leg.names.joinToString(", ")}", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/** Факты из интернета: «Чизбургер — 590 ₸» и ссылка-источник (домен). */
+@Composable
+private fun EvidenceBlock(evidence: List<kz.smartcity.walk.data.api.Evidence>) {
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
+    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Проверено в интернете", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            evidence.forEach { e ->
+                Text("• ${e.fact}", style = MaterialTheme.typography.bodyMedium)
+                e.source?.let { src ->
+                    val host = runCatching { java.net.URI(src).host?.removePrefix("www.") }.getOrNull() ?: src
+                    Text("источник: $host", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 10.dp).then(Modifier.clickable { runCatching { uri.openUri(src) } }))
+                }
+            }
         }
     }
 }

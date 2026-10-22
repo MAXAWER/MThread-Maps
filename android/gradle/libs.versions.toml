@@ -1,11 +1,11 @@
 [versions]
-androidGradlePlugin = "9.0.1"
-kotlin = "2.3.20"
-ksp = "2.3.9"
+androidGradlePlugin = "9.4.1"
+kotlin = "2.4.21"
+ksp = "2.3.12"
 androidxCore = "1.18.0"
 androidxActivity = "1.13.0"
 androidxLifecycle = "2.10.0"
-androidxComposeBom = "2026.03.01"
+androidxComposeBom = "2026.09.00"
 room = "2.8.4"
 work = "2.9.0"
 okhttp = "4.12.0"
@@ -13,7 +13,8 @@ serializationJson = "1.8.1"
 coroutines = "1.10.2"
 playServicesLocation = "21.3.0"
 junit = "4.13.2"
-haze = "1.7.1"
+haze = "1.7.3"
+material3 = "1.5.0-beta02"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
@@ -27,7 +28,7 @@ androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
 androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
 androidx-compose-foundation = { group = "androidx.compose.foundation", name = "foundation" }
-androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "material3" }
 androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }

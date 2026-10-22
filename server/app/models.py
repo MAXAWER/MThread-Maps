@@ -69,6 +69,26 @@ class Chip(BaseModel):
     removable: bool = True
 
 
+QUICK_ICONS = ("home", "work", "family", "friend", "school", "sport", "food", "shop", "star", "heart")
+
+
+class SavedPlaceIn(BaseModel):
+    """Место, сохранённое пользователем («Дом», «Брат»): агент едет туда по имени."""
+    name: str = Field(max_length=60)
+    address: str | None = Field(default=None, max_length=200)
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+
+
+class RememberOffer(BaseModel):
+    """Агент предлагает запомнить место; приложение сохраняет только после согласия человека."""
+    name: str
+    icon: str = "star"
+    address: str | None = None
+    lat: float
+    lon: float
+
+
 class SearchRequest(GeoRequest):
     query: str = Field(min_length=1, max_length=500)
     local_time: datetime
@@ -78,6 +98,7 @@ class SearchRequest(GeoRequest):
     profile_affinity: dict[str, float] = Field(default_factory=dict)
     lang: str | None = None
     filters: JevFilters | None = None  # фильтры, правленные клиентом: Jev не вызывается повторно
+    saved_places: list[SavedPlaceIn] = Field(default_factory=list, max_length=20)
 
     @field_validator("local_time")
     @classmethod
@@ -104,6 +125,12 @@ class CandidateOut(BaseModel):
     role: Literal["destination", "waypoint", "place"] = "destination"
 
 
+class Evidence(BaseModel):
+    """Проверенный факт о месте: позиция меню с ценой, акция, особенность — и откуда он (ссылка)."""
+    fact: str
+    source: str | None = None
+
+
 class AnswerItem(BaseModel):
     poi_id: str
     name: str
@@ -126,6 +153,7 @@ class AnswerItem(BaseModel):
     confirmed: list[str] = Field(default_factory=list)
     unconfirmed: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    evidence: list[Evidence] = Field(default_factory=list)
 
 
 class PlanLeg(BaseModel):
@@ -138,6 +166,10 @@ class PlanLeg(BaseModel):
     lon: float
     open_state: OpenState = "unknown"
     open_until: str | None = None
+    arrive_at: str | None = None   # «14:05» — прибытие на эту точку
+    leave_at: str | None = None    # уход после visit_min
+    visit_min: int | None = None
+    distance_m: int | None = None
 
 
 class Plan(BaseModel):
@@ -162,6 +194,7 @@ class Answer(BaseModel):
     understood: list[str] = Field(default_factory=list)  # как агент понял запрос
     route: dict | None = None             # маршрут к первому месту (RouteOut), если просили «как добраться»
     route_option_id: str | None = None    # выбранный агентом вариант маршрута
+    remember: RememberOffer | None = None  # предложение запомнить место (с разрешения)
 
 
 class PlacePoint(BaseModel):

@@ -1,6 +1,7 @@
 package kz.smartcity.walk.ui.map
 
 import android.graphics.BitmapFactory
+import android.os.Build
 import android.util.LruCache
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
@@ -16,6 +17,10 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import kotlin.math.abs
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.foundation.gestures.calculateRotation
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -24,10 +29,12 @@ import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -89,6 +96,8 @@ data class MapLayers(
     val lines: List<MapLine> = emptyList(),
     val stops: List<MapStop> = emptyList(),
     val user: LatLng? = null,
+    /** Куда смотрит телефон (азимут от севера) — конус у точки пользователя. */
+    val heading: Float? = null,
 )
 
 private const val TILE_DP = 256f
@@ -104,6 +113,9 @@ class MapCamera(center: LatLng, zoom: Double) {
     var center by mutableStateOf(center)
         private set
     var zoom by mutableDoubleStateOf(zoom)
+        private set
+    /** Поворот карты в градусах по часовой стрелке (0 — север сверху). */
+    var bearing by mutableFloatStateOf(0f)
         private set
     internal var size = IntSize.Zero
     internal var tilePx = TILE_DP
@@ -126,27 +138,59 @@ class MapCamera(center: LatLng, zoom: Double) {
         return LatLng(lat, lon)
     }
 
+    /** Поворот вектора на угол (в градусах) — переход между осями мира и экрана. */
+    private fun rot(v: Offset, deg: Float): Offset {
+        if (deg == 0f) return v
+        val r = deg * PI.toFloat() / 180f
+        val cs = kotlin.math.cos(r)
+        val sn = sin(r.toDouble()).toFloat()
+        return Offset(v.x * cs - v.y * sn, v.x * sn + v.y * cs)
+    }
+
     fun toScreen(lat: Double, lon: Double): Offset {
         val c = world(center.lat, center.lon)
         val p = world(lat, lon)
-        return Offset(p.x - c.x + size.width / 2f, p.y - c.y + size.height / 2f)
+        return rot(p - c, bearing) + Offset(size.width / 2f, size.height / 2f)
     }
 
     fun toLatLng(screen: Offset): LatLng {
         val c = world(center.lat, center.lon)
-        return fromWorld(Offset(c.x + screen.x - size.width / 2f, c.y + screen.y - size.height / 2f))
+        return fromWorld(c + rot(screen - Offset(size.width / 2f, size.height / 2f), -bearing))
     }
 
     internal fun panBy(delta: Offset) {
         val c = world(center.lat, center.lon)
-        center = fromWorld(c - delta)
+        center = fromWorld(c - rot(delta, -bearing))
+    }
+
+    /** Поставить центр так, чтобы точка anchor оказалась под пальцем focus. */
+    private fun keepUnder(anchor: LatLng, focus: Offset) {
+        val p = world(anchor.lat, anchor.lon)
+        center = fromWorld(p - rot(focus - Offset(size.width / 2f, size.height / 2f), -bearing))
     }
 
     internal fun zoomAround(focus: Offset, factor: Float) {
         val anchor = toLatLng(focus)
         zoom = (zoom + log2(factor.toDouble())).coerceIn(MIN_ZOOM, MAX_ZOOM)
-        val p = world(anchor.lat, anchor.lon)
-        center = fromWorld(Offset(p.x - (focus.x - size.width / 2f), p.y - (focus.y - size.height / 2f)))
+        keepUnder(anchor, focus)
+    }
+
+    /** Поворот двумя пальцами вокруг их центра. */
+    internal fun rotateAround(focus: Offset, degrees: Float) {
+        val anchor = toLatLng(focus)
+        bearing = ((bearing + degrees) % 360f + 360f) % 360f
+        keepUnder(anchor, focus)
+    }
+
+    /** Режим компаса: карта поворачивается вслед за телефоном (без анимации — датчик уже сглажен). */
+    internal fun setBearing(deg: Float) { bearing = ((deg % 360f) + 360f) % 360f }
+
+    /** Вернуть север вверх — по кратчайшему направлению. */
+    suspend fun resetBearing() = mutex.mutate(MutatePriority.Default) {
+        val from = if (bearing > 180f) bearing - 360f else bearing
+        Animatable(from).animateTo(0f, spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow)) {
+            bearing = (value % 360f + 360f) % 360f
+        }
     }
 
     /** Остановить перелёт или инерцию: касание пальцем всегда главнее анимации. */
@@ -207,16 +251,49 @@ class MapCamera(center: LatLng, zoom: Double) {
     }
 }
 
-/** Тайлы 2ГИС (HD, 512 px на тайл): LRU-кэш в памяти и не больше 6 загрузок одновременно. */
+/**
+ * Тайлы 2ГИС (HD, 512 px на тайл): LRU-кэш на ~200 тайлов и не больше 6 загрузок одновременно.
+ * Битмапы аппаратные (живут в памяти GPU): при панорамировании они не перезаливаются в видеопамять каждый кадр.
+ */
 private object TileStore {
     private val http = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(12, TimeUnit.SECONDS).build()
-    private val cache = LruCache<String, ImageBitmap>(96)
+    private val cache = LruCache<String, ImageBitmap>(200)
+    private val decode = BitmapFactory.Options().apply {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) inPreferredConfig = android.graphics.Bitmap.Config.HARDWARE
+    }
     private val loading = HashSet<String>()
     private val failed = HashMap<String, Long>()
-    private val gate = Semaphore(6)
+    private val gate = Semaphore(8)
     val version = mutableIntStateOf(0)
 
+    /** Дисковый кэш тайлов: скачанное хранится между запусками, повторный показ — без сети. */
+    @Volatile var dir: java.io.File? = null
+
     fun get(z: Int, x: Int, y: Int): ImageBitmap? = cache.get("$z/$x/$y")
+
+    private fun url(z: Int, x: Int, y: Int) = "https://tile${(x + y) % 4}.maps.2gis.com/tiles?x=$x&y=$y&z=$z&v=1&ts=online_hd"
+
+    private fun file(z: Int, x: Int, y: Int): java.io.File? = dir?.let { java.io.File(it, "$z/$x/$y.png") }
+
+    /** Байты тайла: с диска, иначе из сети (и сразу на диск). Вызывать на IO. */
+    fun bytes(z: Int, x: Int, y: Int): ByteArray? {
+        file(z, x, y)?.takeIf { it.length() > 0 }?.let { f -> runCatching { return f.readBytes() } }
+        val data = runCatching {
+            http.newCall(Request.Builder().url(url(z, x, y)).build()).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null }
+        }.getOrNull() ?: return null
+        file(z, x, y)?.let { f ->
+            runCatching {
+                f.parentFile?.mkdirs()
+                val tmp = java.io.File(f.path + ".tmp")
+                tmp.writeBytes(data)
+                tmp.renameTo(f)
+            }
+        }
+        return data
+    }
+
+    /** Есть ли тайл на диске — предзагрузка пропускает уже скачанное. */
+    fun cached(z: Int, x: Int, y: Int): Boolean = file(z, x, y)?.let { it.length() > 0 } == true
 
     fun request(scope: CoroutineScope, z: Int, x: Int, y: Int) {
         val key = "$z/$x/$y"
@@ -229,17 +306,13 @@ private object TileStore {
             val img = gate.withPermit {
                 withContext(Dispatchers.IO) {
                     runCatching {
-                        val url = "https://tile${(x + y) % 4}.maps.2gis.com/tiles?x=$x&y=$y&z=$z&v=1&ts=online_hd"
-                        http.newCall(Request.Builder().url(url).build()).execute().use { r ->
-                            val bytes = r.body?.bytes() ?: return@use null
-                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-                        }
+                        bytes(z, x, y)?.let { b -> BitmapFactory.decodeByteArray(b, 0, b.size, decode)?.asImageBitmap() }
                     }.getOrNull()
                 }
             }
             synchronized(loading) {
                 loading -= key
-                if (img != null) cache.put(key, img) else failed[key] = System.currentTimeMillis() + 15_000
+                if (img != null) cache.put(key, img) else failed[key] = System.currentTimeMillis() + 4_000
             }
             if (img != null) version.intValue++
         }
@@ -248,6 +321,46 @@ private object TileStore {
 
 @Composable
 fun rememberMapCamera(center: LatLng, zoom: Double = 14.0): MapCamera = remember { MapCamera(center, zoom) }
+
+/** Номер тайла по координатам (Web Mercator). */
+private fun tileXY(lat: Double, lon: Double, z: Int): Pair<Int, Int> {
+    val n = 1 shl z
+    val s = sin(lat * PI / 180)
+    val x = ((lon + 180) / 360 * n).toInt().coerceIn(0, n - 1)
+    val y = ((0.5 - ln((1 + s) / (1 - s)) / (4 * PI)) * n).toInt().coerceIn(0, n - 1)
+    return x to y
+}
+
+/**
+ * Предзагрузка карты в дисковый кэш, в фоне и не больше 3 загрузок разом (видимые тайлы важнее).
+ * Один раз (по Wi‑Fi) — вся Астана на обзорных масштабах 10–13; при каждом запуске — подробно (15–16) около человека.
+ */
+suspend fun preloadTiles(context: android.content.Context, around: LatLng) = withContext(Dispatchers.IO) {
+    TileStore.dir = TileStore.dir ?: java.io.File(context.filesDir, "tiles")
+    val prefs = context.getSharedPreferences("walk_tiles", android.content.Context.MODE_PRIVATE)
+    val jobs = mutableListOf<Triple<Int, Int, Int>>()
+    fun area(south: Double, west: Double, north: Double, east: Double, zooms: IntRange) {
+        for (z in zooms) {
+            val (x0, y0) = tileXY(north, west, z)
+            val (x1, y1) = tileXY(south, east, z)
+            for (x in x0..x1) for (y in y0..y1) jobs += Triple(z, x, y)
+        }
+    }
+    val dLat = 0.018 // ~2 км
+    val dLon = 0.029
+    area(around.lat - dLat, around.lon - dLon, around.lat + dLat, around.lon + dLon, 15..16)
+    // Город целиком — только без лимитного трафика (Wi‑Fi): это ~20–30 МБ.
+    val cm = context.getSystemService(android.net.ConnectivityManager::class.java)
+    val city = !prefs.getBoolean("city_v1", false) && cm?.isActiveNetworkMetered == false
+    if (city) area(50.98, 71.20, 51.26, 71.68, 10..13)
+    val gate = Semaphore(3)
+    kotlinx.coroutines.coroutineScope {
+        jobs.filterNot { (z, x, y) -> TileStore.cached(z, x, y) }.forEach { (z, x, y) ->
+            launch { gate.withPermit { TileStore.bytes(z, x, y) } }
+        }
+    }
+    if (city) prefs.edit().putBoolean("city_v1", true).apply()
+}
 
 /**
  * Карта на Compose: тайлы 2ГИС, маршруты, остановки, маркеры и точка пользователя на одном Canvas.
@@ -261,9 +374,18 @@ fun TileMap(
     onLongPress: (LatLng) -> Unit,
     modifier: Modifier = Modifier,
     dark: Boolean = false,
+    /** Человек сам двигает или масштабирует карту — навигатор перестаёт следовать за ним. */
+    onUserGesture: () -> Unit = {},
 ) {
     val density = LocalDensity.current
+    // Жесты живут дольше одной рекомпозиции: берём свежие слои и колбэки, а не те, что были при первом кадре.
+    val currentLayers by rememberUpdatedState(layers)
+    val markerClick by rememberUpdatedState(onMarkerClick)
+    val longPress by rememberUpdatedState(onLongPress)
+    val gesture by rememberUpdatedState(onUserGesture)
     camera.tilePx = TILE_DP * density.density
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    if (TileStore.dir == null) TileStore.dir = java.io.File(ctx.filesDir, "tiles")
     val scope = rememberCoroutineScope()
     val text = rememberTextMeasurer()
     val colors = remember(dark) { MapColors(dark) }
@@ -274,10 +396,10 @@ fun TileMap(
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = { pos ->
-                        hitMarker(camera, layers.markers, pos, density.density)?.let(onMarkerClick)
+                        hitMarker(camera, currentLayers.markers, pos, density.density)?.let(markerClick)
                     },
-                    onDoubleTap = { pos -> scope.launch { camera.animateTo(camera.toLatLng(pos), camera.zoom + 1) } },
-                    onLongPress = { pos -> onLongPress(camera.toLatLng(pos)) },
+                    onDoubleTap = { pos -> gesture(); scope.launch { camera.animateTo(camera.toLatLng(pos), camera.zoom + 1) } },
+                    onLongPress = { pos -> longPress(camera.toLatLng(pos)) },
                 )
             }
             .pointerInput(Unit) {
@@ -288,6 +410,8 @@ fun TileMap(
                     tracker.addPosition(down.uptimeMillis, down.position)
                     var moving = false
                     var travel = 0f
+                    var turn = 0f
+                    var rotating = false
                     var lastPointers = 1
                     do {
                         val event = awaitPointerEvent()
@@ -295,13 +419,17 @@ fun TileMap(
                         if (pressed == 0) break
                         val pan = event.calculatePan()
                         val zoomChange = event.calculateZoom()
+                        val rotationChange = if (pressed >= 2) event.calculateRotation() else 0f
                         if (!moving) {
                             travel += pan.getDistance()
-                            if (travel > viewConfiguration.touchSlop || zoomChange != 1f) moving = true
+                            if (travel > viewConfiguration.touchSlop || zoomChange != 1f) { moving = true; gesture() }
                         }
                         if (moving) {
                             camera.panBy(pan)
                             if (zoomChange != 1f) camera.zoomAround(event.calculateCentroid(), zoomChange)
+                            // Поворот включается, только когда пальцы явно повернули (> 12°): щипок масштаба не крутит карту.
+                            if (!rotating) { turn += rotationChange; if (abs(turn) > 12f) rotating = true }
+                            if (rotating && rotationChange != 0f) camera.rotateAround(event.calculateCentroid(), rotationChange)
                             event.changes.forEach { if (it.positionChanged()) it.consume() }
                         }
                         if (pressed != lastPointers) tracker.resetTracking()
@@ -321,12 +449,13 @@ fun TileMap(
         layers.lines.forEach { drawLine(camera, it, density.density) }
         layers.stops.sortedBy { it.major }.forEach { drawStop(camera, it, text, colors, density.density) }
         layers.markers.sortedBy { it.kind == "rec" || it.kind == "dest" }.forEach { drawMarker(camera, it, text, density.density) }
-        layers.user?.let { drawUser(camera, it, density.density) }
+        layers.user?.let { drawUser(camera, it, density.density, layers.heading) }
     }
 }
 
 private class MapColors(dark: Boolean) {
-    val background = if (dark) Color(0xFF1E2128) else Color(0xFFF1F3F8)
+    // Цвет «суши» 2ГИС: пока тайл грузится, под ним не чёрная дыра, а фон в тон карте (тайлы светлые и в тёмной теме).
+    val background = Color(0xFFEDEAE2)
     val label = Color(0xFF101828)
     val labelBg = Color.White
 }
@@ -337,9 +466,17 @@ private fun DrawScope.drawTiles(camera: MapCamera, scope: CoroutineScope) {
     val tile = camera.tilePx
     val c = camera.world(camera.center.lat, camera.center.lon, z.toDouble())
     val w = size.width; val h = size.height
-    val x0 = floor((c.x - w / 2 / k) / tile).toInt(); val x1 = floor((c.x + w / 2 / k) / tile).toInt()
-    val y0 = floor((c.y - h / 2 / k) / tile).toInt(); val y1 = floor((c.y + h / 2 / k) / tile).toInt()
     val n = 1 shl z
+    // Тайлы рисуются в повёрнутой системе: поворачиваем холст вокруг центра, а покрытие берём по диагонали экрана.
+    rotate(camera.bearing, pivot = Offset(w / 2, h / 2)) { drawTileGrid(camera, scope, z, k, tile, c, n) }
+}
+
+private fun DrawScope.drawTileGrid(camera: MapCamera, scope: CoroutineScope, z: Int, k: Float, tile: Float, c: Offset, n: Int) {
+    val w = size.width; val h = size.height
+    val r = if (camera.bearing == 0f) 0f else (kotlin.math.hypot(w, h) - kotlin.math.min(w, h)) / 2
+    val x0 = floor((c.x - (w / 2 + r) / k) / tile).toInt(); val x1 = floor((c.x + (w / 2 + r) / k) / tile).toInt()
+    val y0 = floor((c.y - (h / 2 + r) / k) / tile).toInt(); val y1 = floor((c.y + (h / 2 + r) / k) / tile).toInt()
+
     for (tx in x0..x1) for (ty in y0..y1) {
         if (ty < 0 || ty >= n) continue
         val wx = ((tx % n) + n) % n
@@ -352,11 +489,20 @@ private fun DrawScope.drawTiles(camera: MapCamera, scope: CoroutineScope) {
             continue
         }
         TileStore.request(scope, z, wx, ty)
-        // Пока тайл грузится — растягиваем «родителя» уровнем выше, чтобы не было пустых квадратов.
-        val parent = TileStore.get(z - 1, wx / 2, ty / 2) ?: continue
-        val half = parent.width / 2
-        drawImage(parent, srcOffset = IntOffset((wx % 2) * half, (ty % 2) * half), srcSize = IntSize(half, half),
-            dstOffset = IntOffset(dx.roundToInt(), dy.roundToInt()), dstSize = dst)
+        // Пока тайл грузится — растягиваем предка (уровнем или двумя выше), чтобы не было пустых квадратов.
+        for (up in 1..3) {
+            val parent = TileStore.get(z - up, wx shr up, ty shr up) ?: continue
+            val part = parent.width shr up
+            val sx = (wx and ((1 shl up) - 1)) * part
+            val sy = (ty and ((1 shl up) - 1)) * part
+            drawImage(parent, srcOffset = IntOffset(sx, sy), srcSize = IntSize(part, part),
+                dstOffset = IntOffset(dx.roundToInt(), dy.roundToInt()), dstSize = dst)
+            break
+        }
+    }    // Потом — кольцо тайлов вокруг экрана (видимые грузятся первыми): при движении карты края уже готовы.
+    for (tx in x0 - 1..x1 + 1) for (ty in y0 - 1..y1 + 1) {
+        if (ty < 0 || ty >= n || (tx in x0..x1 && ty in y0..y1)) continue
+        TileStore.request(scope, z, ((tx % n) + n) % n, ty)
     }
 }
 
@@ -417,8 +563,15 @@ private fun DrawScope.drawMarker(camera: MapCamera, m: MapMarker, text: TextMeas
     drawText(layout, topLeft = Offset(s.x - layout.size.width / 2f, cy - layout.size.height / 2f))
 }
 
-private fun DrawScope.drawUser(camera: MapCamera, p: LatLng, d: Float) {
+private fun DrawScope.drawUser(camera: MapCamera, p: LatLng, d: Float, heading: Float?) {
     val s = camera.toScreen(p.lat, p.lon)
+    if (heading != null) {
+        // Конус взгляда: угол на экране = азимут + поворот карты; мягко гаснет к краю.
+        val r = 64 * d
+        val start = heading + camera.bearing - 90f - 32f
+        drawArc(Brush.radialGradient(listOf(Color(0x991F5FD0), Color(0x001F5FD0)), center = s, radius = r),
+            startAngle = start, sweepAngle = 64f, useCenter = true, topLeft = s - Offset(r, r), size = Size(r * 2, r * 2))
+    }
     drawCircle(Color(0x331F5FD0), 24 * d, s)
     drawCircle(Color.Black.copy(alpha = 0.18f), 12.5f * d, s + Offset(0f, 1.5f * d))
     drawCircle(Color.White, 12 * d, s)

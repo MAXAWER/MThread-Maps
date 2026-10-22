@@ -172,36 +172,61 @@ class ClaudeService:
         except json.JSONDecodeError:
             return None
 
-    async def agent_loop(self, user_payload: dict, execute: ToolExecutor, on_turn=None) -> dict | None:
-        """Агент Sonnet 5.5 с инструментами 2ГИС. Возвращает вход submit_answer или None.
+    async def agent_loop(self, user_payload: dict, execute: ToolExecutor, on_turn=None, on_web=None) -> dict | None:
+        """Агент Sonnet 5.5 с инструментами 2ГИС и серверным веб-поиском. Возвращает вход submit_answer или None.
 
         Адаптивное мышление включено у модели по умолчанию, глубину задаёт effort. tool_choice — только auto
         (принудительный выбор инструмента Sonnet 5.5 отклоняет). В историю добавляется весь content ответа.
+        Веб-поиск и чтение страниц выполняет API; если ход прерван (pause_turn), запрос повторяется с тем же
+        хвостом — модель продолжает с места остановки. on_web(name, input) сообщает о каждом веб-шаге.
         """
         messages: list[dict] = [{"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)}]
         system = [{"type": "text", "text": prompts.AGENT_SYSTEM, "cache_control": {"type": "ephemeral"}}]
         max_calls = self._s.agent_max_tool_calls
+        web = prompts.agent_web_tools(self._s.agent_web_max_uses) if self._s.agent_web else []
+        tools = prompts.AGENT_TOOLS + web
         calls = 0
         nudged = False
 
         async def run() -> dict | None:
-            nonlocal calls, nudged
+            nonlocal calls, nudged, tools
             for _ in range(max_calls + 4):
                 if on_turn:
                     await on_turn(calls)
-                resp = await self._sonnet(
-                    model=self._s.agent_model,
-                    max_tokens=16000,
-                    system=system,
-                    tools=prompts.AGENT_TOOLS,
-                    tool_choice={"type": "auto"},
-                    messages=messages,
-                    output_config={"effort": self._s.agent_effort},
-                )
+                try:
+                    resp = await self._sonnet(
+                        model=self._s.agent_model,
+                        max_tokens=16000,
+                        system=system,
+                        tools=tools,
+                        tool_choice={"type": "auto"},
+                        messages=messages,
+                        output_config={"effort": self._s.agent_effort},
+                    )
+                except anthropic.BadRequestError as exc:
+                    # Веб-инструменты недоступны (регион, политика организации) — продолжаем без них, а не падаем.
+                    if not web or calls > 0 or len(tools) == len(prompts.AGENT_TOOLS):
+                        raise
+                    log.warning("agent: web tools rejected, retrying without them: %s", exc)
+                    tools = list(prompts.AGENT_TOOLS)
+                    continue
                 log.info("agent turn: stop=%s in=%s out=%s", resp.stop_reason, resp.usage.input_tokens,
                          resp.usage.output_tokens)
                 if resp.stop_reason == "refusal":
                     return None
+                if on_web:
+                    for b in resp.content:
+                        if b.type == "server_tool_use":
+                            await on_web(b.name, dict(b.input or {}))
+                for b in resp.content:
+                    # Ошибки веб-поиска приходят внутри ответа (а не исключением) — пишем код, чтобы их было видно в логах.
+                    if b.type in ("web_search_tool_result", "web_fetch_tool_result"):
+                        err = getattr(b.content, "error_code", None)
+                        if err:
+                            log.warning("agent: %s error %s", b.type, err)
+                if resp.stop_reason == "pause_turn":
+                    messages.append({"role": "assistant", "content": resp.content})
+                    continue
                 uses = [b for b in resp.content if b.type == "tool_use"]
                 submit = next((u for u in uses if u.name == "submit_answer"), None)
                 if submit is not None:

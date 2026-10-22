@@ -18,14 +18,14 @@ fun local(name: String, default: String) = localProps.getProperty(name, default)
 
 android {
     namespace = "kz.smartcity.walk"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "kz.smartcity.walk"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "API_BASE_URL", "\"${local("api.baseUrl", "http://10.0.2.2:8080")}\"")
     }

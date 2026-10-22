@@ -117,6 +117,12 @@ private fun ProfileMain(vm: ProfileViewModel, bottomSpace: Dp, onPortrait: () ->
     val walk by vm.walk.collectAsStateWithLifecycle()
     val facts by vm.facts.collectAsStateWithLifecycle()
     var confirmDelete by remember { mutableStateOf(false) }
+    val quick by vm.quick.collectAsStateWithLifecycle()
+    var editing by remember { mutableStateOf<Pair<Boolean, kz.smartcity.walk.data.QuickPlace?>?>(null) }
+    editing?.let { (_, p) ->
+        QuickPlaceDialog(initial = p, suggest = vm::suggest, here = vm::here,
+            onSave = { vm.saveQuick(it); editing = null }, onDismiss = { editing = null })
+    }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) { vm.refreshPermissions(context) } }
 
@@ -130,7 +136,10 @@ private fun ProfileMain(vm: ProfileViewModel, bottomSpace: Dp, onPortrait: () ->
                 }
             }
         }
-        Section(1, "Подсказки на прогулке") {
+        Section(1, "Быстрые маршруты") {
+            QuickPlacesList(quick, onEdit = { editing = true to it }, onDelete = { vm.deleteQuick(it) })
+        }
+        Section(2, "Подсказки на прогулке") {
             val status = when (walk.state) {
                 WalkDetector.State.WALKING -> "Сейчас: идёт прогулка, ${((System.currentTimeMillis() - walk.startedMs) / 60_000)} мин, ${walk.distanceM} м"
                 WalkDetector.State.CANDIDATE -> "Сейчас: определяем прогулку…"

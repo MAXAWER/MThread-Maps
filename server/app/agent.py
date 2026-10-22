@@ -10,11 +10,12 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import AsyncIterator
+from urllib.parse import urlparse
 
 from .dgis import DgisError, Place, label_route_options
 from .geo import haversine_m
 from .jev import TRANSPORT_LABELS
-from .models import Answer, AnswerItem, Chip, JevFilters, SearchRequest
+from .models import Answer, AnswerItem, Chip, Evidence, JevFilters, Plan, PlanLeg, RememberOffer, SearchRequest
 from .schedule import open_at, open_info
 from .search import (DETOUR, WEEKDAYS_RU, Evaluated, category_label, open_until_label, to_candidate, to_item,
                      travel_times)
@@ -25,6 +26,7 @@ log = logging.getLogger(__name__)
 MATRIX_TRANSPORTS = {"walking", "bicycle", "scooter", "driving", "taxi"}
 # Квота демо-ключа 2ГИС: не больше трёх проверок маршрута на один запрос.
 MAX_ROUTE_CHECKS = 3
+MAX_TRIP_CHECKS = 2
 LEG_LABELS = {"bus": "автобус", "trolleybus": "троллейбус", "tram": "трамвай", "shuttle_bus": "маршрутка",
               "metro": "метро", "light_rail": "ЛРТ", "lrt": "ЛРТ"}
 
@@ -39,7 +41,12 @@ class SearchAgent:
         self.etas: dict[tuple[str, str], tuple[float, float, str]] = {}
         self.routes: dict[tuple[str, str], dict] = {}
         self.route_checks = 0
+        self.trip_checks = 0
+        self.legs: dict[tuple, dict] = {}
         self.shown: dict[str, Evaluated] = {}
+        # Сохранённые места пользователя — как обычные места с id saved:N.
+        for i, sp in enumerate(req.saved_places):
+            self.places[f"saved:{i}"] = Place(id=f"saved:{i}", name=sp.name, lat=sp.lat, lon=sp.lon, address=sp.address)
 
     # ---------- контекст для модели ----------
     def payload(self) -> dict:
@@ -61,12 +68,19 @@ class SearchAgent:
             },
             "profile": self.req.profile_summary[:1500] or "портрет пока пуст",
             "category_interest": dict(sorted(self.req.profile_affinity.items(), key=lambda kv: -kv[1])[:8]),
+            "saved_places": [{"place_id": f"saved:{i}", "name": sp.name, "address": sp.address}
+                             for i, sp in enumerate(self.req.saved_places)],
         }
 
     # ---------- инструменты ----------
     async def execute(self, name: str, args: dict) -> dict:
         if name == "search_places":
             return await self._search(str(args["query"]), int(args.get("radius_m") or 3000))
+        if name == "check_trip":
+            return await self._trip([str(p) for p in args.get("place_ids") or []],
+                                    [int(v) for v in args.get("visit_min") or []], str(args["transport"]))
+        if name == "find_address":
+            return await self._address(str(args["query"]))
         if name == "place_details":
             return await self._details(str(args["place_id"]))
         if name == "route_options":
@@ -94,6 +108,90 @@ class SearchAgent:
                 "data_source": self.svc.data_source}))
         return {"query": query, "radius_m": radius, "eta_transport": TRANSPORT_LABELS.get(mode, mode),
                 "places": out, "note": None if out else "Ничего не найдено — попробуй другую формулировку или радиус."}
+
+    async def _leg(self, a: tuple[float, float], b: tuple[float, float], transport: str) -> dict:
+        """Один этап поездки: время, расстояние, линия (запросы 2ГИС кэшируются)."""
+        key = (round(a[0], 4), round(a[1], 4), round(b[0], 4), round(b[1], 4), transport)
+        if key in self.legs:
+            return self.legs[key]
+        try:
+            data = await self.svc.places.route([a, b], transport)
+            opt = (data.get("options") or [data])[0]
+            leg = {"duration_s": int(opt.get("total_duration_s") or 0), "distance_m": int(opt.get("total_distance_m") or 0),
+                   "geometry": opt.get("geometry") or [], "estimate": False}
+        except DgisError:
+            dist = haversine_m(a[0], a[1], b[0], b[1]) * DETOUR
+            speed = self.svc.settings.speeds_kmh.get(transport if transport in MATRIX_TRANSPORTS else "walking", 4.5)
+            leg = {"duration_s": int(dist / (speed * 1000 / 3600)), "distance_m": int(dist),
+                   "geometry": [[a[1], a[0]], [b[1], b[0]]], "estimate": True}
+        self.legs[key] = leg
+        return leg
+
+    async def _trip(self, place_ids: list[str], visits: list[int], transport: str) -> dict:
+        """Маршрут через несколько точек в заданном порядке: этапы, прибытие и уход, открыто ли к приходу."""
+        if not 2 <= len(place_ids) <= 5:
+            return {"error": "нужно от 2 до 5 точек"}
+        if self.trip_checks >= MAX_TRIP_CHECKS:
+            return {"error": f"лимит проверок маршрута ({MAX_TRIP_CHECKS}) исчерпан — выбери из уже проверенных"}
+        self.trip_checks += 1
+        places = []
+        for pid in place_ids:
+            p = self.places.get(pid) or await self.svc.places.place_by_id(pid)
+            if p is None:
+                return {"error": f"место {pid} не найдено"}
+            self.places[p.id] = p
+            places.append(p)
+        await self.emit(("progress", {"text": "Проверяю порядок: " + " → ".join(p.name for p in places)[:120]}))
+        stops, here, clock = [], self.origin, 0.0
+        for i, p in enumerate(places):
+            leg = await self._leg(here, (p.lat, p.lon), transport)
+            clock += leg["duration_s"] / 60
+            info = open_at(p.schedule, self.now, clock)
+            visit = max(5, min(visits[i] if i < len(visits) else 30, 480))
+            stops.append({"place_id": p.id, "name": p.name, "travel_min": max(1, round(leg["duration_s"] / 60)),
+                          "distance_m": leg["distance_m"], "arrive_at": (self.now + timedelta(minutes=clock)).strftime("%H:%M"),
+                          "open_on_arrival": info.state if info else "unknown",
+                          "leave_at": (self.now + timedelta(minutes=clock + visit)).strftime("%H:%M")})
+            clock += visit
+            here = (p.lat, p.lon)
+        return {"transport": transport, "stops": stops, "total_min": round(clock),
+                "finish_at": (self.now + timedelta(minutes=clock)).strftime("%H:%M")}
+
+    async def _plan(self, items: list[AnswerItem], visits: list[int], purposes: list[str]) -> Plan:
+        """План по точкам ответа в его порядке: линия через все точки и расписание прибытия."""
+        legs, geometry, here, clock, total_dist = [], [], self.origin, 0.0, 0
+        for i, it in enumerate(items):
+            p = self.places[it.poi_id]
+            leg = await self._leg(here, (p.lat, p.lon), it.transport)
+            clock += leg["duration_s"] / 60
+            info = open_at(p.schedule, self.now, clock)
+            visit = visits[i]
+            geometry += leg["geometry"]
+            total_dist += leg["distance_m"]
+            legs.append(PlanLeg(to=p.id, name=p.name, purpose=purposes[i] or "Остановка", transport=it.transport,
+                                eta_min=max(1, round(leg["duration_s"] / 60)), lat=p.lat, lon=p.lon,
+                                open_state=info.state if info else "unknown", open_until=open_until_label(info),
+                                arrive_at=(self.now + timedelta(minutes=clock)).strftime("%H:%M"),
+                                leave_at=(self.now + timedelta(minutes=clock + visit)).strftime("%H:%M"),
+                                visit_min=visit, distance_m=leg["distance_m"]))
+            clock += visit
+            here = (p.lat, p.lon)
+        return Plan(legs=legs, total_min=round(clock), rain_exposure_min=0, geometry=geometry)
+
+    async def _address(self, query: str) -> dict:
+        await self.emit(("progress", {"text": f"Ищу адрес: {query}"}))
+        try:
+            found = await self.svc.places.geocode(query, self.origin[0], self.origin[1])
+        except DgisError as exc:
+            return {"error": f"геокодер недоступен: {exc}"}
+        out = []
+        for g in found[:3]:
+            pid = f"addr:{len([k for k in self.places if k.startswith('addr:')])}"
+            p = Place(id=pid, name=g.get("title") or query, lat=float(g["lat"]), lon=float(g["lon"]), address=g.get("title"))
+            self.places[pid] = p
+            out.append({"place_id": pid, "name": p.name, "type": g.get("type"),
+                        "distance_m": int(round(haversine_m(self.origin[0], self.origin[1], p.lat, p.lon), -1))})
+        return {"query": query, "results": out, "note": None if out else "Адрес не найден — уточни улицу и дом."}
 
     async def _details(self, place_id: str) -> dict:
         p = self.places.get(place_id) or await self.svc.places.place_by_id(place_id)
@@ -169,7 +267,7 @@ class SearchAgent:
     async def build_answer(self, result: dict) -> Answer:
         items: list[AnswerItem] = []
         route_out, route_opt = None, None
-        for i, it in enumerate((result.get("items") or [])[:3]):
+        for i, it in enumerate((result.get("items") or [])[:5]):
             pid = str(it.get("place_id") or "")
             p = self.places.get(pid) or await self.svc.places.place_by_id(pid)
             if p is None:
@@ -187,8 +285,11 @@ class SearchAgent:
                     eta = (await travel_times(self.svc, self.origin, [p], transport)).get(p.id)
                 ev = self._evaluated(p, *(eta or (None, None, "estimate")))
             visit = max(5, min(int(it.get("visit_min") or 30), 480))
-            items.append(to_item(ev, self.svc.catalog, transport, why=_trim(it.get("why"), 400), visit_min=visit,
-                                 action=_trim(it.get("action"), 260)))
+            item = to_item(ev, self.svc.catalog, transport, why=_trim(it.get("why"), 400), visit_min=visit,
+                           action=_trim(it.get("action"), 260))
+            item.evidence = [Evidence(fact=_trim(e.get("fact"), 160) or "", source=_url(e.get("source")))
+                             for e in (it.get("evidence") or [])[:6] if e.get("fact")]
+            items.append(item)
             if i == 0 and result.get("show_route") and route and option:
                 d = route["data"]
                 route_out = {"transport": transport, "total_distance_m": option["total_distance_m"],
@@ -196,11 +297,32 @@ class SearchAgent:
                              "maneuvers": option["maneuvers"], "source": d.get("source", "routing"),
                              "note": d.get("note"), "options": route["options"]}
                 route_opt = option["id"]
-        mode = "simple" if items else "empty"
+        plan = None
+        if result.get("trip") and len(items) >= 2:
+            raw = (result.get("items") or [])[:5]
+            kept = {it.poi_id for it in items}
+            src = [r for r in raw if str(r.get("place_id")) in kept]
+            plan = await self._plan(items, [max(5, min(int(r.get("visit_min") or 30), 480)) for r in src],
+                                    [_trim(r.get("purpose"), 40) or "" for r in src])
+            route_out, route_opt = None, None
+        remember = None
+        rem = result.get("remember") or None
+        if rem and rem.get("name"):
+            rp = self.places.get(str(rem.get("place_id") or ""))
+            if rp is not None:
+                remember = RememberOffer(name=_trim(rem["name"], 40) or "Место", icon=str(rem.get("icon") or "star"),
+                                         address=rp.address or rp.name, lat=rp.lat, lon=rp.lon)
+        mode = "plan" if plan else ("simple" if items else "empty")
         return Answer(mode=mode, items=items, idea=_trim(result.get("idea"), 300), data_source=self.svc.data_source,
                       summary=_trim(result.get("summary"), 300), understood=[str(u)[:40] for u in (result.get("understood") or [])[:5]],
-                      route=route_out, route_option_id=route_opt,
+                      route=route_out, route_option_id=route_opt, remember=remember, plan=plan,
                       note=None if items else (_trim(result.get("summary"), 300) or "Подходящих мест не нашлось."))
+
+
+def _url(value) -> str | None:
+    """Источник факта — только http(s)-ссылка, иначе не показываем."""
+    v = str(value or "").strip()
+    return v[:500] if v.startswith(("https://", "http://")) else None
 
 
 def _trim(text, limit: int) -> str | None:
@@ -221,9 +343,16 @@ async def agent_mode(req: SearchRequest, svc: Services, weather: dict | None, la
     async def on_turn(calls: int) -> None:
         await queue.put(("progress", {"text": "Думаю над запросом…" if calls == 0 else "Сравниваю варианты…"}))
 
+    async def on_web(name: str, args: dict) -> None:
+        if name == "web_search":
+            await queue.put(("progress", {"text": f"Ищу в интернете: {_trim(args.get('query'), 80) or '…'}"}))
+        elif name == "web_fetch":
+            host = urlparse(str(args.get("url") or "")).netloc.removeprefix("www.")
+            await queue.put(("progress", {"text": f"Читаю страницу: {host or 'сайт'}"}))
+
     async def run() -> None:
         try:
-            result = await svc.llm.agent_loop(agent.payload(), agent.execute, on_turn=on_turn)
+            result = await svc.llm.agent_loop(agent.payload(), agent.execute, on_turn=on_turn, on_web=on_web)
             if result is None:
                 await queue.put(("fallback", {}))
                 return

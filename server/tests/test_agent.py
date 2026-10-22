@@ -14,7 +14,7 @@ class ScriptedAgentLLM:
         self.fail = fail
         self.payload = None
 
-    async def agent_loop(self, payload, execute, on_turn=None):
+    async def agent_loop(self, payload, execute, on_turn=None, on_web=None):
         self.payload = payload
         if self.fail:
             return None
@@ -54,6 +54,41 @@ async def test_agent_answer_with_route():
     chips = next(d for n, d in events if n == "filters")["chips"]
     assert [c["label"] for c in chips] == ["Кофейня", "Пешком"] and not chips[0]["removable"]
     assert "profile" in svc.llm.payload and svc.llm.payload["query"] == "кофе рядом"
+
+
+class TripAgentLLM(ScriptedAgentLLM):
+    """Многошаговый запрос: два места, проверка порядка, факты из интернета и предложение запомнить адрес."""
+
+    async def agent_loop(self, payload, execute, on_turn=None, on_web=None):
+        self.payload = payload
+        if on_web:
+            await on_web("web_search", {"query": "кофейня меню цены Астана"})
+        coffee = (await execute("search_places", {"query": "кофейня", "radius_m": 3000}))["places"][0]["id"]
+        park = (await execute("search_places", {"query": "парк", "radius_m": 3000}))["places"][0]["id"]
+        trip = await execute("check_trip", {"place_ids": [coffee, park], "visit_min": [30, 60], "transport": "walking"})
+        assert len(trip["stops"]) == 2 and trip["stops"][0]["arrive_at"] and trip["total_min"] >= 90
+        addr = (await execute("find_address", {"query": "Хан Шатыр"}))["results"][0]["place_id"]
+        item = {"why": "—", "action": "—", "transport": "walking", "route_option_id": None}
+        return {"items": [{**item, "place_id": coffee, "visit_min": 30, "purpose": "Кофе",
+                           "evidence": [{"fact": "Капучино — 1200 ₸", "source": "https://example.kz/menu"},
+                                        {"fact": "Без ссылки", "source": "javascript:alert(1)"}]},
+                          {**item, "place_id": park, "visit_min": 60, "purpose": "Прогулка", "evidence": []}],
+                "understood": ["Кофе", "Парк"], "summary": "Сначала кофе, потом парк.", "show_route": False,
+                "idea": None, "trip": True, "remember": {"name": "Брат", "place_id": addr, "icon": "family"}}
+
+
+async def test_agent_trip_plan_evidence_and_remember():
+    svc = make_services()
+    svc.llm = TripAgentLLM()
+    events = await _events(svc, "кофе, потом погулять в парке")
+    assert any(n == "progress" and d["text"].startswith("Ищу в интернете") for n, d in events)
+    answer = next(d for n, d in events if n == "answer")
+    assert answer["mode"] == "plan" and [leg["purpose"] for leg in answer["plan"]["legs"]] == ["Кофе", "Прогулка"]
+    legs = answer["plan"]["legs"]
+    assert legs[0]["arrive_at"] and legs[0]["leave_at"] and legs[1]["visit_min"] == 60 and answer["plan"]["geometry"]
+    ev = answer["items"][0]["evidence"]
+    assert ev[0] == {"fact": "Капучино — 1200 ₸", "source": "https://example.kz/menu"} and ev[1]["source"] is None
+    assert answer["remember"]["name"] == "Брат" and answer["remember"]["icon"] == "family"
 
 
 async def test_agent_failure_falls_back_to_pipeline():

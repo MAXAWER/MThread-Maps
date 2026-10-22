@@ -68,7 +68,22 @@ data class NavState(
     val soundOn: Boolean = true,
     val simulated: Boolean = false,
     val note: String? = null,
-)
+    /** Общественный транспорт: этапы поездки, текущий этап и остановки до выхода. */
+    val legs: List<TransitLeg> = emptyList(),
+    val legIndex: Int = 0,
+    val toLegEndM: Int? = null,
+    val stopsLeft: Int? = null,
+    val nextStopName: String? = null,
+    /** Ближайшее отправление на момент построения ([startedAtMs]) или интервал движения. */
+    val departure: String? = null,
+    val departureInMin: Int? = null,
+    val nextDepartures: List<String> = emptyList(),
+    val intervalMin: Int? = null,
+    val startedAtMs: Long = 0,
+) {
+    val transit get() = legs.any { !it.isWalk }
+    val currentLeg get() = legs.getOrNull(legIndex)
+}
 
 object NavigationBus {
     val state = MutableStateFlow<NavState?>(null)
@@ -78,6 +93,9 @@ object NavigationBus {
 class NavigationService : Service(), TextToSpeech.OnInitListener {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var engine: NavigationEngine? = null
+    private var tracker: TransitTracker? = null
+    private var lastLeg = -1
+    private var lastStopsLeft: Int? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var locationJob: Job? = null
@@ -140,7 +158,8 @@ class NavigationService : Service(), TextToSpeech.OnInitListener {
     }
 
     /** Маршрут сервера начинается в округлённой точке; отрезок от точной позиции достраивается здесь, на устройстве. */
-    private fun setRoute(route: RouteResponse, precise: LatLng?) {
+    private fun setRoute(input: RouteResponse, precise: LatLng?) {
+        val route = if (input.options.size > 1) input.withOption(null) else input
         var geometry = route.geometry.map { LatLng(it[1], it[0]) }
         if (precise != null && geometry.isNotEmpty() && Geo.distance(precise, geometry.first()) > 10.0) {
             geometry = listOf(precise) + geometry
@@ -149,10 +168,40 @@ class NavigationService : Service(), TextToSpeech.OnInitListener {
         val speed = if (route.totalDurationS > 0 && route.totalDistanceM > 0) route.totalDistanceM.toDouble() / route.totalDurationS
         else NavigationEngine.defaultSpeedMps(route.transport)
         engine = NavigationEngine(geometry, maneuvers, route.transport, speed)
+        val opt = route.chosen
+        val legs = opt?.legs.orEmpty().map { l ->
+            TransitLeg(kind = l.kind, names = l.names, color = l.color, fromName = l.fromName, toName = l.toName,
+                durationS = l.durationS, waitS = l.waitS, distanceM = l.distanceM,
+                line = l.geometry.mapNotNull { if (it.size >= 2) LatLng(it[1], it[0]) else null },
+                stops = l.stops.map { LatLng(it.lat, it.lon) }, stopNames = l.stops.map { it.name })
+        }
+        tracker = legs.takeIf { it.any { l -> !l.isWalk } }?.let { TransitTracker(it) }
+        lastLeg = -1
+        lastStopsLeft = null
         val d = dest ?: return
         NavigationBus.state.value = NavState(dest = d, transport = route.transport, geometry = geometry,
             remainingM = route.totalDistanceM, etaMin = route.totalDurationS / 60, soundOn = graph.settings.soundOn,
-            simulated = simulate, note = route.note)
+            simulated = simulate, note = route.note, legs = legs, departure = opt?.departure,
+            departureInMin = opt?.departureInMin, nextDepartures = opt?.nextDepartures.orEmpty(), intervalMin = opt?.intervalMin,
+            startedAtMs = System.currentTimeMillis())
+    }
+
+    /** Голос для поездки с пересадками: смена этапа и предупреждение перед выходом. */
+    private fun transitPrompt(state: NavState, p: TransitProgress): String? {
+        val leg = state.legs.getOrNull(p.legIndex) ?: return null
+        var prompt: String? = null
+        if (p.legIndex != lastLeg) {
+            prompt = when {
+                !leg.isWalk -> "Садитесь на ${legTitle(leg)}. Выход на остановке ${leg.toName ?: "по маршруту"}"
+                p.legIndex == state.legs.lastIndex -> "Выходите. Дальше пешком до места"
+                else -> state.legs.getOrNull(p.legIndex + 1)?.let { "Идите к остановке ${it.fromName ?: ""}" }
+            }
+            lastLeg = p.legIndex
+        } else if (!leg.isWalk && p.stopsLeft == 1 && lastStopsLeft != 1) {
+            prompt = "Следующая остановка ваша: ${leg.toName ?: ""}"
+        }
+        lastStopsLeft = p.stopsLeft
+        return prompt
     }
 
     private fun startLocations(route: RouteResponse) {
@@ -171,8 +220,11 @@ class NavigationService : Service(), TextToSpeech.OnInitListener {
         val d = dest ?: return
         val u = e.update(pos, System.currentTimeMillis())
         val state = NavigationBus.state.value ?: return
-        if (u.prompt != null && state.soundOn && ttsReady) {
-            tts?.speak(u.prompt, TextToSpeech.QUEUE_FLUSH, null, "nav")
+        val tp = tracker?.update(pos)
+        // На транспорте пошаговые повороты не нужны: говорим о посадке, пересадке и выходе.
+        val say = if (tp != null) (if (u.arrived) u.prompt else transitPrompt(state, tp)) else u.prompt
+        if (say != null && state.soundOn && ttsReady) {
+            tts?.speak(say, TextToSpeech.QUEUE_FLUSH, null, "nav")
         }
         // Тактильные подсказки: чувствуются в кармане и без звука.
         when {
@@ -187,6 +239,7 @@ class NavigationService : Service(), TextToSpeech.OnInitListener {
             turnDirection = if (u.arrived) null else u.nextManeuver?.turnDirection,
             distanceToManeuverM = u.distanceToManeuverM?.toInt(), remainingM = u.remainingM.toInt(), etaMin = u.etaMin,
             offRoute = u.offRoute, arrived = u.arrived,
+            legIndex = tp?.legIndex ?: 0, toLegEndM = tp?.toLegEndM, stopsLeft = tp?.stopsLeft, nextStopName = tp?.nextStopName,
         )
         updateNotification(state.dest.name, if (u.arrived) "Вы на месте" else "${u.nextManeuver?.text ?: "По маршруту"} · ${u.etaMin} мин")
         if (u.needReroute) reroute(pos)
@@ -330,4 +383,13 @@ object RouteSimulator {
         }
         emit(route.last())
     }
+}
+
+/** «автобус 47» / «троллейбус 3, 12» — для голоса и подписей. */
+fun legTitle(leg: TransitLeg): String {
+    val kind = when (leg.kind) {
+        "bus" -> "автобус"; "trolleybus" -> "троллейбус"; "tram" -> "трамвай"; "shuttle_bus" -> "маршрутку"
+        "metro" -> "метро"; "light_rail" -> "LRT"; else -> "транспорт"
+    }
+    return if (leg.names.isEmpty()) kind else "$kind ${leg.names.joinToString(", ")}"
 }

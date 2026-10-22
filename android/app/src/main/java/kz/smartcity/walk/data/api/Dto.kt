@@ -87,7 +87,19 @@ data class AnswerItem(
     val confirmed: List<String> = emptyList(),
     val unconfirmed: List<String> = emptyList(),
     val notes: List<String> = emptyList(),
+    /** Факты из интернета (позиция меню и цена, акция) со ссылкой на источник. */
+    val evidence: List<Evidence> = emptyList(),
 )
+
+@Serializable
+data class Evidence(val fact: String, val source: String? = null)
+
+/** ИИ предлагает запомнить место; сохраняется только после согласия. */
+@Serializable
+data class RememberOffer(val name: String, val icon: String = "star", val address: String? = null, val lat: Double, val lon: Double)
+
+@Serializable
+data class SavedPlaceIn(val name: String, val address: String? = null, val lat: Double, val lon: Double)
 
 @Serializable
 data class PlanLeg(
@@ -100,6 +112,10 @@ data class PlanLeg(
     val lon: Double,
     val openState: String = "unknown",
     val openUntil: String? = null,
+    val arriveAt: String? = null,
+    val leaveAt: String? = null,
+    val visitMin: Int? = null,
+    val distanceM: Int? = null,
 )
 
 @Serializable
@@ -127,6 +143,7 @@ data class Answer(
     /** Маршрут к первому месту, если агента просили «как добраться». */
     val route: RouteResponse? = null,
     val routeOptionId: String? = null,
+    val remember: RememberOffer? = null,
 )
 
 @Serializable
@@ -150,6 +167,7 @@ data class SearchRequest(
     val profileAffinity: Map<String, Double> = emptyMap(),
     val lang: String? = null,
     val filters: JevFilters? = null,
+    val savedPlaces: List<SavedPlaceIn> = emptyList(),
 )
 
 @Serializable
@@ -223,12 +241,15 @@ data class RouteResponse(
     val note: String? = null,
     val options: List<RouteOption> = emptyList(),
 ) {
-    /** Маршрут по выбранному варианту: его линию и манёвры берёт навигатор. */
+    /** Маршрут по выбранному варианту: его линию, манёвры и этапы (автобусы, остановки) берёт навигатор. */
     fun withOption(id: String?): RouteResponse {
-        val o = options.firstOrNull { it.id == id } ?: return this
+        val o = options.firstOrNull { it.id == id } ?: options.firstOrNull() ?: return this
         return copy(totalDistanceM = o.totalDistanceM, totalDurationS = o.totalDurationS, geometry = o.geometry,
-            maneuvers = o.maneuvers)
+            maneuvers = o.maneuvers, options = listOf(o))
     }
+
+    /** Вариант, по которому идёт навигация (после [withOption] он единственный). */
+    val chosen: RouteOption? get() = options.firstOrNull()
 }
 
 @Serializable

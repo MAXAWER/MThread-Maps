@@ -18,6 +18,9 @@ import kotlinx.coroutines.launch
 import kz.smartcity.walk.AppGraph
 import kz.smartcity.walk.data.LatLng
 import kz.smartcity.walk.data.Settings
+import kz.smartcity.walk.data.QuickPlace
+import kz.smartcity.walk.data.api.ApiException
+import kz.smartcity.walk.data.api.SuggestItem
 import kz.smartcity.walk.data.db.CategoryCounter
 import kz.smartcity.walk.data.db.ProfileFact
 import kz.smartcity.walk.walk.ActivityTransitions
@@ -47,6 +50,17 @@ class ProfileViewModel(private val g: AppGraph) : ViewModel() {
     val walk: StateFlow<WalkStatus> = WalkService.statusFlow
     val ui = MutableStateFlow(snapshot())
     val permissions = MutableStateFlow(PermissionStatus())
+    val quick = g.places.items
+
+    fun saveQuick(p: QuickPlace) = g.places.upsert(p)
+    fun deleteQuick(p: QuickPlace) = g.places.remove(p.id)
+
+    suspend fun suggest(q: String): List<SuggestItem> {
+        val at = g.location.current() ?: LatLng(51.128, 71.430)
+        return try { g.api.suggest(q, Math.round(at.lat * 100) / 100.0, Math.round(at.lon * 100) / 100.0).items } catch (_: ApiException) { emptyList() }
+    }
+
+    suspend fun here(): Pair<Double, Double>? = g.location.current()?.let { it.lat to it.lon }
 
     private fun snapshot() = ProfileUi(
         transport = g.settings.defaultTransport,

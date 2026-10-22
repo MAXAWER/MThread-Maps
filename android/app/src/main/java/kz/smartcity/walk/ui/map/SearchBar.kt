@@ -104,17 +104,12 @@ import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
 import kotlinx.coroutines.delay
+import kz.smartcity.walk.data.QuickPlace
+import kz.smartcity.walk.ui.components.hintIcon
+import kz.smartcity.walk.ui.components.quickIcon
 import kz.smartcity.walk.ui.fx.BubbleChip
 import kz.smartcity.walk.ui.fx.LocalHaptics
 
-private val HINTS = listOf(
-    "Кофе рядом" to Icons.Filled.LocalCafe,
-    "Как добраться на автобусе до Байтерека" to Icons.Filled.DirectionsBus,
-    "Проложи маршрут в университет" to Icons.Filled.School,
-    "Прогулка на час" to Icons.AutoMirrored.Filled.DirectionsWalk,
-    "С ребёнком" to Icons.Filled.ChildCare,
-    "Поесть недорого" to Icons.Filled.Restaurant,
-)
 
 private val FAB = 56.dp
 private val MAX_BAR = 600.dp
@@ -132,7 +127,7 @@ private val Morph = spring<Float>(dampingRatio = 0.86f, stiffness = 420f)
 @OptIn(ExperimentalHazeMaterialsApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun SearchComposer(s: MapUiState, vm: MapViewModel, hazeState: HazeState, collapsedBottom: () -> Dp, collapsedVisible: () -> Boolean,
-                   modifier: Modifier = Modifier) {
+                   quick: List<QuickPlace>, modifier: Modifier = Modifier) {
     val haptics = LocalHaptics.current
     val density = LocalDensity.current
     val focus = LocalFocusManager.current
@@ -144,7 +139,7 @@ fun SearchComposer(s: MapUiState, vm: MapViewModel, hazeState: HazeState, collap
     val imeBottom = with(density) { maxOf(WindowInsets.ime.getBottom(this), WindowInsets.navigationBars.getBottom(this)).toDp() }
     val submit = {
         val q = s.query
-        if (q.isNotBlank()) { haptics?.tap(); focus.clearFocus(); keyboard?.hide(); vm.search(q) }
+        if (q.isNotBlank()) { haptics?.tap(); focus.clearFocus(); keyboard?.hide(); vm.submit(q) }
     }
 
     BackHandler(enabled = s.composing) { focus.clearFocus(); vm.closeComposer() }
@@ -193,8 +188,10 @@ fun SearchComposer(s: MapUiState, vm: MapViewModel, hazeState: HazeState, collap
                         }
                     }
                 } else if (s.query.isBlank()) {
+                    // Быстрые маршруты — первыми, затем подсказки под этого человека (время, интересы, недавнее).
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        HINTS.forEach { (hint, icon) -> BubbleChip(hint, onClick = { vm.search(hint) }, leading = icon) }
+                        quick.forEach { p -> BubbleChip(p.name, onClick = { vm.routeToQuick(p) }, leading = quickIcon(p.icon)) }
+                        s.hints.forEach { h -> BubbleChip(if (h.text.length > 40) h.text.take(39).trimEnd() + "…" else h.text, onClick = { vm.search(h.text) }, leading = hintIcon(h.icon)) }
                     }
                 }
             }
@@ -221,7 +218,8 @@ fun SearchComposer(s: MapUiState, vm: MapViewModel, hazeState: HazeState, collap
                             }
                             BasicTextField(
                                 value = s.query,
-                                onValueChange = vm::onQueryChange,
+                                // Enter в многострочном поле — отправка, а не новая строка (перенос — только автоматический).
+                                onValueChange = { v -> if ('\n' in v) { vm.onQueryChange(v.replace("\n", " ").trim()); submit() } else vm.onQueryChange(v) },
                                 maxLines = 5,
                                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
@@ -252,7 +250,7 @@ private fun thoughtsOf(s: MapUiState): List<String> =
  * выезжает с инерцией из-под строки (пружина), старая уезжает вверх. Если мыслей накопилось много,
  * они сменяются быстрее — видно, что нейросеть делает много и быстро.
  */
-@OptIn(ExperimentalHazeMaterialsApi::class)
+@OptIn(ExperimentalHazeMaterialsApi::class, androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun ThinkingCapsule(s: MapUiState, hazeState: HazeState, modifier: Modifier = Modifier) {
     val lines by rememberUpdatedState(thoughtsOf(s))
@@ -293,8 +291,7 @@ fun ThinkingCapsule(s: MapUiState, hazeState: HazeState, modifier: Modifier = Mo
     ) {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = c1,
-                    modifier = Modifier.size(20.dp).rotate(spin).alpha(pulse))
+                androidx.compose.material3.LoadingIndicator(Modifier.size(28.dp), color = c1)
                 Spacer(Modifier.width(10.dp))
                 Text(s.lastQuery, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
                     maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))

@@ -2,6 +2,7 @@ package kz.smartcity.walk.ui.map
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -43,6 +44,9 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DirectionsBus
 import androidx.compose.material.icons.filled.LocalCafe
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.LocationSearching
+import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Search
@@ -69,6 +73,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -89,9 +94,15 @@ import dev.chrisbanes.haze.materials.HazeMaterials
 import kotlinx.coroutines.launch
 import kz.smartcity.walk.data.LatLng
 import kz.smartcity.walk.nav.NavigationBus
+import kz.smartcity.walk.ui.components.quickIcon
 import kz.smartcity.walk.ui.fx.BubbleChip
 import kz.smartcity.walk.ui.fx.LocalHaptics
 
+
+private enum class CamMode { FREE, FOLLOW, COMPASS }
+
+private val ROUTE_BLUE = androidx.compose.ui.graphics.Color(0xFF1A66E0)
+private val WALK_GREY = androidx.compose.ui.graphics.Color(0xFF4F5B70)
 
 /** Центр Астаны — пока нет геолокации. */
 private val CITY = LatLng(51.128, 71.430)
@@ -101,11 +112,13 @@ private val CITY = LatLng(51.128, 71.430)
  * размытием. Результаты, место и маршрут — стандартная шторка Material 3 (BottomSheetScaffold):
  * её жесты и вложенная прокрутка работают вместе, ничего не дёргается.
  */
+@Suppress("DEPRECATION")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalHazeMaterialsApi::class)
 @Composable
 fun MapScreen(vm: MapViewModel, hazeState: HazeState, modifier: Modifier = Modifier, bottomSpace: Dp = 0.dp,
               active: Boolean = true, wide: Boolean = false) {
     val s by vm.state.collectAsStateWithLifecycle()
+    val quick by vm.quickPlaces.collectAsStateWithLifecycle()
     val nav by NavigationBus.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -113,8 +126,19 @@ fun MapScreen(vm: MapViewModel, hazeState: HazeState, modifier: Modifier = Modif
     val dark = isSystemInDarkTheme()
     val scope = rememberCoroutineScope()
     val camera = rememberMapCamera(vm.state.value.myLocation ?: CITY)
-    val primary = MaterialTheme.colorScheme.primary
-    val walkColor = MaterialTheme.colorScheme.onSurfaceVariant
+    // Тайлы карты светлые и в тёмной теме, поэтому линии маршрута — постоянные контрастные цвета, не из темы.
+    val primary = ROUTE_BLUE
+    val walkColor = WALK_GREY
+    // Навигация: камера следует за человеком, пока он сам не потрогает карту; вернуть — кнопкой.
+    var follow by remember { mutableStateOf(true) }
+    LaunchedEffect(nav != null) { follow = true }
+    // Кнопка «моё место», как в Google Картах: свободно → следовать за точкой → следовать по компасу.
+    var camMode by remember { mutableStateOf(CamMode.FREE) }
+    val heading by rememberHeading(active)
+    LaunchedEffect(active, nav == null) { if (active && nav == null) vm.trackLocation() }
+    // Карта заранее на диск: Астана целиком на обзорных масштабах (один раз) и подробно — вокруг человека.
+    val appContext = LocalContext.current.applicationContext
+    LaunchedEffect(s.myLocation != null) { preloadTiles(appContext, s.myLocation ?: CITY) }
 
     val sheetOpen = s.sheet != SheetMode.NONE && nav == null && active
     val sheetState = rememberStandardBottomSheetState(initialValue = SheetValue.Hidden, skipHiddenState = false)
@@ -162,13 +186,34 @@ fun MapScreen(vm: MapViewModel, hazeState: HazeState, modifier: Modifier = Modif
             val me = s.myLocation ?: return@LaunchedEffect
             if (markers.isEmpty() && nav == null) camera.animateTo(me, 15.0)
         }
-        LaunchedEffect(nav?.position) { nav?.position?.let { camera.animateTo(it, 17.0) } }
-
-        val layers = remember(s.answer, s.candidates, s.route, s.selectedOptionId, s.sheet, s.routeTarget, s.place, nav?.geometry, s.myLocation, nav?.position) {
-            val base = vm.layers(s, primary, walkColor)
-            val navLine = nav?.geometry?.takeIf { it.size > 1 }?.let { listOf(MapLine(it, primary)) }
-            base.copy(lines = navLine ?: base.lines, user = nav?.position ?: s.myLocation)
+        // Плавное слежение: позиция приходит раз в секунду, камера едет к ней ~0,9 с без рывков и не меняет масштаб,
+        // выбранный человеком. Первый кадр навигации — крупный план (16).
+        var navZoomed by remember { mutableStateOf(false) }
+        LaunchedEffect(nav == null) { if (nav == null) navZoomed = false }
+        LaunchedEffect(nav?.position, follow) {
+            val p = nav?.position ?: return@LaunchedEffect
+            if (!follow) return@LaunchedEffect
+            val z = if (navZoomed) camera.zoom else 16.0
+            navZoomed = true
+            camera.animateTo(p, z, tween(900, easing = LinearOutSlowInEasing))
         }
+
+        // Следование и компас вне навигатора: камера едет за точкой; в режиме компаса карта поворачивается за телефоном.
+        LaunchedEffect(s.myLocation, camMode) {
+            val p = s.myLocation ?: return@LaunchedEffect
+            if (nav == null && camMode != CamMode.FREE) camera.animateTo(p, camera.zoom, tween(800, easing = LinearOutSlowInEasing))
+        }
+        LaunchedEffect(heading, camMode) {
+            val h = heading ?: return@LaunchedEffect
+            if (camMode == CamMode.COMPASS) camera.setBearing(-h)
+        }
+
+        val baseLayers = remember(s.answer, s.candidates, s.route, s.selectedOptionId, s.sheet, s.routeTarget, s.place, nav, s.myLocation) {
+            val current = nav
+            if (current != null) vm.navLayers(current, primary, walkColor)
+            else vm.layers(s, primary, walkColor).copy(user = s.myLocation)
+        }
+        val layers = baseLayers.copy(heading = heading)
 
         val sheetContent: @Composable () -> Unit = {
             AnimatedContent(
@@ -192,6 +237,7 @@ fun MapScreen(vm: MapViewModel, hazeState: HazeState, modifier: Modifier = Modif
                 layers = layers,
                 onMarkerClick = { id -> haptics?.tap(); vm.onMarkerClick(id) },
                 onLongPress = { p -> if (nav == null) { haptics?.threshold(); vm.onLongPress(p) } },
+                onUserGesture = { if (nav != null) follow = false; camMode = CamMode.FREE },
                 modifier = Modifier.fillMaxSize().hazeSource(hazeState),
                 dark = dark,
             )
@@ -214,20 +260,69 @@ fun MapScreen(vm: MapViewModel, hazeState: HazeState, modifier: Modifier = Modif
                             .padding(horizontal = 14.dp, vertical = 8.dp))
                 }
                 s.error?.takeIf { s.sheet == SheetMode.NONE }?.let { ErrorBanner(it, onDismiss = vm::dismissError) }
+                AnimatedVisibility(s.remember != null, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+                    s.remember?.let { RememberCard(it, onSave = { haptics?.tap(); vm.acceptRemember() }, onDismiss = vm::dismissRemember) }
+                }
             }
         }
         val locate: @Composable (Modifier) -> Unit = { mod ->
-            SmallFloatingActionButton(
-                onClick = { haptics?.tap(); scope.launch { camera.animateTo(vm.refreshLocation(), 16.0) } },
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                contentColor = MaterialTheme.colorScheme.primary,
-                modifier = mod.semantics { contentDescription = "Моё местоположение" },
-            ) { Icon(Icons.Filled.MyLocation, contentDescription = null) }
+            Column(mod, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                val on = camMode != CamMode.FREE
+                SmallFloatingActionButton(
+                    onClick = {
+                        haptics?.tap()
+                        when (camMode) {
+                            CamMode.FREE -> { camMode = CamMode.FOLLOW; scope.launch { camera.animateTo(vm.refreshLocation(), maxOf(camera.zoom, 16.0)) } }
+                            CamMode.FOLLOW -> camMode = CamMode.COMPASS
+                            CamMode.COMPASS -> { camMode = CamMode.FOLLOW; scope.launch { camera.resetBearing() } }
+                        }
+                    },
+                    containerColor = if (on) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    contentColor = if (on) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.semantics {
+                        contentDescription = when (camMode) {
+                            CamMode.FREE -> "Моё местоположение"; CamMode.FOLLOW -> "Следовать по компасу"; CamMode.COMPASS -> "Север вверх"
+                        }
+                    },
+                ) {
+                    Icon(when (camMode) {
+                        CamMode.FREE -> Icons.Filled.LocationSearching; CamMode.FOLLOW -> Icons.Filled.MyLocation
+                        CamMode.COMPASS -> Icons.Filled.Explore
+                    }, contentDescription = null)
+                }
+                // Компас: виден, пока карта повёрнута; стрелка показывает север, нажатие — север вверх.
+                AnimatedVisibility(camera.bearing != 0f && camMode != CamMode.COMPASS, enter = fadeIn() + androidx.compose.animation.scaleIn(),
+                    exit = fadeOut() + androidx.compose.animation.scaleOut()) {
+                    SmallFloatingActionButton(
+                        onClick = { haptics?.tap(); scope.launch { camera.resetBearing() } },
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        contentColor = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.semantics { contentDescription = "Север вверх" },
+                    ) {
+                        Icon(Icons.Filled.Navigation, contentDescription = null,
+                            modifier = Modifier.graphicsLayer { rotationZ = -camera.bearing })
+                    }
+                }
+            }
         }
 
         val navOverlay: @Composable () -> Boolean = {
             val current = nav
-            if (current != null) NavigationOverlay(current, vm, bottomSpace = bottomSpace,
+            if (current != null) NavigationOverlay(current, vm, bottomSpace = bottomSpace, wide = wide, follow = follow,
+                compass = camMode == CamMode.COMPASS,
+                onCompass = {
+                    haptics?.tap()
+                    if (camMode == CamMode.COMPASS) { camMode = CamMode.FREE; scope.launch { camera.resetBearing() } }
+                    else { camMode = CamMode.COMPASS; follow = true }
+                },
+                onRecenter = { haptics?.tap(); follow = true },
+                onOverview = {
+                    follow = false
+                    scope.launch {
+                        val pts = current.geometry + listOfNotNull(current.position)
+                        camera.fitBounds(pts, with(density) { 200.dp.toPx() }, with(density) { 260.dp.toPx() }, sidePx, sidePx)
+                    }
+                },
                 onOpen2gis = { t -> vm.openIn2gis(context, t, current.transport) })
             current != null
         }
@@ -275,7 +370,16 @@ fun MapScreen(vm: MapViewModel, hazeState: HazeState, modifier: Modifier = Modif
             val heightPx = constraints.maxHeight.toFloat()
             // Положение шторки читается внутри SearchComposer: при перетаскивании перерисовывается только кнопка.
             val sheetTop = { if (!wide && sheetOpen) runCatching { sheetState.requireOffset() }.getOrNull() else null }
-            SearchComposer(s, vm, hazeState,
+            // Быстрые маршруты на карте: слева от кнопки поиска, пока шторка закрыта.
+            AnimatedVisibility(quick.isNotEmpty() && !sheetOpen && !s.composing, enter = fadeIn(), exit = fadeOut(),
+                modifier = Modifier.align(Alignment.BottomStart).padding(bottom = bottomSpace + 16.dp, end = 88.dp)) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 12.dp)) {
+                    items(quick, key = { it.id }) { p ->
+                        BubbleChip(p.name, onClick = { haptics?.tap(); vm.routeToQuick(p) }, leading = quickIcon(p.icon))
+                    }
+                }
+            }
+            SearchComposer(s, vm, hazeState, quick = quick,
                 collapsedBottom = { sheetTop()?.let { with(density) { (heightPx - it).toDp() } + 12.dp } ?: (bottomSpace + 8.dp) },
                 collapsedVisible = { sheetTop()?.let { it > heightPx * 0.3f } ?: true })
         }
@@ -289,6 +393,31 @@ private fun ErrorBanner(text: String, onDismiss: () -> Unit) {
         Row(Modifier.padding(start = 18.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(text, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
             IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, contentDescription = "Закрыть") }
+        }
+    }
+}
+
+/** ИИ предлагает запомнить место — сохраняется только по кнопке. */
+@Composable
+private fun RememberCard(r: kz.smartcity.walk.data.api.RememberOffer, onSave: () -> Unit, onDismiss: () -> Unit) {
+    Surface(Modifier.fillMaxWidth().padding(horizontal = 12.dp), shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer, contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        shadowElevation = 4.dp) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(quickIcon(r.icon), contentDescription = null)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Запомнить «${r.name}»?", style = MaterialTheme.typography.titleMedium)
+                    r.address?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                }
+            }
+            Text("Появится кнопка быстрого маршрута, и ИИ будет понимать «поехали к ${r.name.lowercase()}».",
+                style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                androidx.compose.material3.Button(onClick = onSave, modifier = Modifier.weight(1f)) { Text("Запомнить") }
+                androidx.compose.material3.OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Не надо") }
+            }
         }
     }
 }
