@@ -18,6 +18,8 @@ from .query_parse import ParsedNumbers, kids_age_bucket, max_travel_bucket
 log = logging.getLogger(__name__)
 
 CHOICE_MIN = 0.55
+# Покупка по пути превращает поиск в план из двух точек — ошибка дорогая, поэтому порог выше.
+PURCHASE_MIN = 0.75
 NOUL_HARD = 0.80
 NOUL_SOFT = 0.55
 
@@ -103,7 +105,10 @@ def build_questions(catalog: Catalog) -> dict:
         },
         "purchase_item": {
             "type": "choice",
-            "instructions": "Something the user needs to buy or get on the way." + lang_note,
+            "instructions": ("Something the user explicitly says they need to buy or get on the way, in addition to the "
+                             "destination (for example: no umbrella, need water, phone is dying). The destination itself "
+                             "(coffee, food, a cafe) is NOT a purchase. If the user did not mention buying anything, "
+                             "choose none.") + lang_note,
             "criteria": {
                 "umbrella": "An umbrella (no umbrella, rain is coming)",
                 "raincoat": "A raincoat",
@@ -342,7 +347,7 @@ def build_filters(answers: dict, nums: ParsedNumbers, source: str = "jev") -> Je
         f.intent = "find_place"
     for name in ("category_primary", "category_secondary", "purchase_item"):
         c = _choice(answers, name)
-        if c.value:
+        if c.value and (name != "purchase_item" or c.p >= PURCHASE_MIN):
             setattr(f, name, Scored(id=c.value, p=round(c.p, 3)))
     if f.category_secondary and f.category_primary and f.category_secondary.id == f.category_primary.id:
         f.category_secondary = None

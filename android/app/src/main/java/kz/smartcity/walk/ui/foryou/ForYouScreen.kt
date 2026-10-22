@@ -49,8 +49,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
@@ -86,8 +86,6 @@ import kz.smartcity.walk.ui.fx.Depth
 import kz.smartcity.walk.ui.fx.Fills
 import kz.smartcity.walk.ui.fx.LocalHaptics
 import kz.smartcity.walk.ui.fx.bubble
-import kz.smartcity.walk.ui.fx.darker
-import kz.smartcity.walk.ui.fx.lighter
 import kz.smartcity.walk.ui.fx.rememberFrictionFling
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -114,9 +112,8 @@ fun ForYouScreen(vm: ForYouViewModel, modifier: Modifier = Modifier, bottomSpace
 
     Column(
         modifier.fillMaxSize()
-            // Матовое стекло: сквозь него видна размытая карта на дальнем слое.
-            .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.62f),
-                MaterialTheme.colorScheme.background.copy(alpha = 0.9f))))
+            // Плотная подложка: сквозь неё едва видна размытая карта на дальнем слое.
+            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.96f))
             .statusBarsPadding()
             .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = bottomSpace),
     ) {
@@ -309,7 +306,7 @@ private fun DeckCard(
                     CustomAccessibilityAction("Не то") { onSwiped(false); true },
                 )
             }
-            .bubble(BubbleShapes.XL, Fills.surface(), if (interactive) Depth.MODAL else Depth.LOW, glow = groupTint, highlight = 0.18f),
+            .bubble(BubbleShapes.XL, Fills.surface(), if (interactive) Depth.MODAL else Depth.LOW, glow = groupTint),
     ) {
         DeckCardContent(item, likeHint = (motion?.x?.value ?: 0f) / threshold)
         if (d > 0.02f) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.10f * d)))
@@ -360,15 +357,15 @@ private fun DeckCardContent(item: DeckItem, likeHint: Float) {
         // Иллюстрация категории: фото мест Places API не подтверждены, поэтому векторные «пузыри».
         Box(
             Modifier.fillMaxWidth().weight(1f)
-                .background(Brush.radialGradient(listOf(color.lighter(0.55f), color.lighter(0.15f), color.darker(0.1f)))),
+                .background(color),
             contentAlignment = Alignment.Center,
         ) {
             Box(Modifier.size(210.dp).align(Alignment.TopStart).padding(0.dp)
                 .graphicsLayer { translationX = -60f; translationY = -40f }
-                .bubble(BubbleShapes.Pill, Fills.glass(0.18f), Depth.FLOOR, highlight = 0.35f, rim = 0.4f))
+                .bubble(BubbleShapes.Pill, Fills.glass(0.18f), Depth.FLOOR))
             Box(Modifier.size(90.dp).align(Alignment.BottomEnd)
                 .graphicsLayer { translationX = -30f; translationY = -50f }
-                .bubble(BubbleShapes.Pill, Fills.glass(0.14f), Depth.FLOOR, highlight = 0.4f, rim = 0.4f))
+                .bubble(BubbleShapes.Pill, Fills.glass(0.14f), Depth.FLOOR))
             CategoryBadge(c.category, 132.dp)
             if (likeHint > 0.3f) Stamp("ХОЧУ", MaterialTheme.colorScheme.tertiary, Modifier.align(Alignment.TopStart), likeHint)
             if (likeHint < -0.3f) Stamp("НЕ ТО", MaterialTheme.colorScheme.error, Modifier.align(Alignment.TopEnd), -likeHint)
@@ -384,7 +381,7 @@ private fun DeckCardContent(item: DeckItem, likeHint: Float) {
             Text(c.categoryName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 c.etaMin?.let {
-                    Row(Modifier.bubble(BubbleShapes.Pill, Fills.tint(MaterialTheme.colorScheme.primary), Depth.FLOOR, highlight = 0.15f, rim = 0.2f)
+                    Row(Modifier.bubble(BubbleShapes.Pill, Fills.tint(MaterialTheme.colorScheme.primary), Depth.FLOOR)
                         .padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(transportIcon(c.transport), contentDescription = transportLabel(c.transport), modifier = Modifier.size(18.dp),
                             tint = MaterialTheme.colorScheme.primary)
@@ -406,6 +403,6 @@ private fun Stamp(text: String, color: Color, modifier: Modifier, strength: Floa
     Text(text, color = Color.White, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleLarge,
         modifier = modifier.padding(18.dp)
             .graphicsLayer { scaleX = 0.8f + 0.25f * a; scaleY = 0.8f + 0.25f * a; alpha = a; rotationZ = if (text == "ХОЧУ") -12f else 12f }
-            .bubble(BubbleShapes.Pill, Brush.linearGradient(listOf(color.lighter(0.2f), color)), Depth.FLOAT, glow = color)
+            .bubble(BubbleShapes.Pill, SolidColor(color), Depth.FLOAT, glow = color)
             .padding(horizontal = 16.dp, vertical = 8.dp))
 }

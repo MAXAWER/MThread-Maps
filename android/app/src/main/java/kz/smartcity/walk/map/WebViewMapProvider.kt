@@ -34,8 +34,6 @@ import kz.smartcity.walk.data.LatLng
 @SuppressLint("SetJavaScriptEnabled")
 class WebViewMapProvider(
     private val context: Context,
-    private val key: String,
-    private val styleId: String,
     private val baseUrl: String,
     private val dark: Boolean,
     private val initialCenter: LatLng,
@@ -83,8 +81,6 @@ class WebViewMapProvider(
         view.postWebMessage(WebMessage("init", arrayOf(channel[1])), Uri.parse(baseUrl))
         send(buildJsonObject {
             put("type", "init")
-            put("key", key)
-            put("styleId", styleId)
             put("dark", dark)
             put("zoom", 14.0)
             put("center", point(initialCenter))
@@ -96,7 +92,7 @@ class WebViewMapProvider(
         val o = runCatching { Json.parseToJsonElement(data).jsonObject }.getOrNull() ?: return
         val type = o["type"]?.jsonPrimitive?.content
         val ev = when (type) {
-            "ready" -> MapEvent.Ready(o["engine"]?.jsonPrimitive?.content ?: "mapgl")
+            "ready" -> MapEvent.Ready(o["engine"]?.jsonPrimitive?.content ?: "raster")
             "markerClick" -> o["id"]?.jsonPrimitive?.content?.let { MapEvent.MarkerClick(it) }
             "mapLongPress" -> MapEvent.LongPress(LatLng(o.num("lat"), o.num("lon")))
             "cameraIdle" -> MapEvent.CameraIdle(LatLng(o.num("lat"), o.num("lon")), o.num("zoom"))

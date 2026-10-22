@@ -8,7 +8,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
@@ -42,14 +41,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
@@ -73,68 +70,46 @@ object BubbleShapes {
     val Pill = RoundedCornerShape(percent = 50)
 }
 
-fun Color.lighter(f: Float) = lerp(this, Color.White, f)
-fun Color.darker(f: Float) = lerp(this, Color.Black, f)
-
 @Composable
 fun isLightTheme(): Boolean = MaterialTheme.colorScheme.background.luminance() > 0.5f
 
-/** Заливки пузырей: диагональный градиент даёт объём, как у надутой оболочки. */
+/** Заливки пузырей — плоские насыщенные цвета, без градиентов. */
 object Fills {
     @Composable
-    fun primary(): Brush = MaterialTheme.colorScheme.primary.let {
-        Brush.linearGradient(listOf(it.lighter(0.22f), it, it.darker(0.12f)), Offset.Zero, Offset(600f, 600f))
-    }
+    fun primary(): Brush = SolidColor(MaterialTheme.colorScheme.primary)
 
     @Composable
-    fun accent(): Brush = MaterialTheme.colorScheme.secondary.let {
-        Brush.linearGradient(listOf(it.lighter(0.25f), it, it.darker(0.08f)), Offset.Zero, Offset(600f, 600f))
-    }
+    fun accent(): Brush = SolidColor(MaterialTheme.colorScheme.secondary)
 
     @Composable
-    fun tertiary(): Brush = MaterialTheme.colorScheme.tertiary.let {
-        Brush.linearGradient(listOf(it.lighter(0.2f), it, it.darker(0.1f)), Offset.Zero, Offset(600f, 600f))
-    }
+    fun tertiary(): Brush = SolidColor(MaterialTheme.colorScheme.tertiary)
 
     @Composable
-    fun surface(): Brush = MaterialTheme.colorScheme.surface.let {
-        Brush.verticalGradient(listOf(it.lighter(if (isLightTheme()) 0.5f else 0.06f), it))
-    }
+    fun surface(): Brush = SolidColor(MaterialTheme.colorScheme.surface)
 
-    /** Полупрозрачное «стекло» над картой. */
+    /** Полупрозрачная поверхность над картой. */
     @Composable
-    fun glass(alpha: Float = 0.82f): Brush = MaterialTheme.colorScheme.surface.let {
-        Brush.verticalGradient(listOf(it.lighter(0.3f).copy(alpha = alpha), it.copy(alpha = alpha * 0.92f)))
-    }
+    fun glass(alpha: Float = 0.92f): Brush = SolidColor(MaterialTheme.colorScheme.surface.copy(alpha = alpha))
 
+    /** Светлая плашка цвета: фон для пилюль и значков. */
     @Composable
-    fun tint(color: Color): Brush =
-        Brush.linearGradient(listOf(color.copy(alpha = 0.22f), color.copy(alpha = 0.10f)), Offset.Zero, Offset(400f, 400f))
+    fun tint(color: Color): Brush = SolidColor(color.copy(alpha = if (isLightTheme()) 0.14f else 0.24f))
 }
 
 /**
- * Пузырьковая поверхность: цветная мягкая тень по уровню глубины, градиентная заливка,
- * блик в верхней половине и светлая кромка — объём без резких границ.
+ * Пузырьковая поверхность: сильное скругление, плоская заливка и тень по уровню глубины —
+ * чем ближе слой к пользователю, тем больше и мягче тень.
  */
 fun Modifier.bubble(
     shape: Shape,
     fill: Brush,
     depth: Depth = Depth.FLOAT,
-    glow: Color = Color(0xFF0E5E73),
-    highlight: Float = 0.26f,
-    rim: Float = 0.5f,
+    glow: Color = Color(0xFF101828),
 ): Modifier = this
     .then(if (depth.elevation > 0.dp) Modifier.shadow(depth.elevation, shape, clip = false,
-        ambientColor = glow.copy(alpha = 0.30f), spotColor = glow.copy(alpha = 0.42f)) else Modifier)
+        ambientColor = glow.copy(alpha = 0.16f), spotColor = glow.copy(alpha = 0.26f)) else Modifier)
     .clip(shape)
     .background(fill)
-    .drawBehind {
-        if (highlight > 0f) {
-            drawRect(Brush.verticalGradient(0f to Color.White.copy(alpha = highlight), 1f to Color.Transparent,
-                startY = 0f, endY = size.height * 0.55f))
-        }
-    }
-    .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = rim), Color.White.copy(alpha = 0.03f))), shape)
 
 /**
  * Физика нажатия: пружинное «сжатие» пузыря и наклон к точке касания (3D), на отпускании —
@@ -251,7 +226,7 @@ fun BubbleIconButton(
     }
 }
 
-/** Чип-пузырь: выбранный — градиентный, обычный — стеклянный; есть «крестик» для снятия. */
+/** Чип-пузырь: выбранный — залит цветом, обычный — белый; есть «крестик» для снятия. */
 @Composable
 fun BubbleChip(
     text: String,
@@ -271,8 +246,8 @@ fun BubbleChip(
             .minimumInteractiveComponentSize()
             .pressPhysics(interaction, squash = 0.9f)
             .bubble(BubbleShapes.Pill,
-                if (selected) Brush.linearGradient(listOf(accent.lighter(0.2f), accent, accent.darker(0.1f))) else Fills.glass(0.9f),
-                Depth.LOW, glow = glowFor(accent), highlight = if (selected) 0.3f else 0.18f)
+                if (selected) SolidColor(accent) else Fills.surface(),
+                Depth.LOW, glow = glowFor(accent))
             .clickable(interaction, indication = null, role = Role.Button) {
                 haptics?.tick(0.45f)
                 onClick()
@@ -334,7 +309,7 @@ fun PopIn(index: Int, content: @Composable () -> Unit) {
 @Composable
 fun BubbleBadge(text: String, modifier: Modifier = Modifier, fill: Brush = Fills.accent(), size: Dp = 30.dp,
                 color: Color = MaterialTheme.colorScheme.onSecondary) {
-    Box(modifier.size(size).bubble(CircleShape, fill, Depth.LOW, glow = MaterialTheme.colorScheme.secondary, highlight = 0.35f),
+    Box(modifier.size(size).bubble(CircleShape, fill, Depth.LOW, glow = MaterialTheme.colorScheme.secondary),
         contentAlignment = Alignment.Center) {
         Text(text, color = color, fontWeight = FontWeight.Black, style = MaterialTheme.typography.labelLarge)
     }

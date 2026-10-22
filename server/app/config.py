@@ -76,7 +76,8 @@ class Settings:
     planner_model: str = "claude-sonnet-5-5"
     planner_effort: str = "medium"
     planner_fallback: bool = True
-    answer_timeout_s: float = 6.0
+    answer_effort: str = "medium"
+    answer_timeout_s: float = 15.0
     planner_timeout_s: float = 10.0
     openweather_key: str = ""
     weather_override: dict | None = None
@@ -156,7 +157,8 @@ class Settings:
             planner_model=_str("PLANNER_MODEL", cls.planner_model),
             planner_effort=_str("PLANNER_EFFORT", "medium"),
             planner_fallback=_bool("PLANNER_FALLBACK", True),
-            answer_timeout_s=_float("ANSWER_TIMEOUT_S", 6.0),
+            answer_effort=_str("ANSWER_EFFORT", "medium"),
+            answer_timeout_s=_float("ANSWER_TIMEOUT_S", 15.0),
             planner_timeout_s=_float("PLANNER_TIMEOUT_S", 10.0),
             openweather_key=_str("OPENWEATHER_API_KEY"),
             weather_override=override,

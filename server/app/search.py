@@ -315,30 +315,47 @@ def filters_for_prompt(f: JevFilters, catalog: Catalog) -> dict:
 def llm_candidate(ev: Evaluated, catalog: Catalog) -> dict:
     p = ev.place
     cat = catalog.get(p.category)
+    info = ev.arrival_info
     return {
         "candidate": ev.slot,
+        "code_rank": ANSWER_SLOTS.index(ev.slot) + 1 if ev.slot in ANSWER_SLOTS else None,
         "name": p.name,
         "category": category_label(catalog, p),
+        "rubrics": p.rubrics[:4],
+        "address": p.address,
         "eta_min": None if ev.eta_min is None else max(1, round(ev.eta_min)),
-        "open_state": ev.arrival_info.state if ev.arrival_info else "unknown",
-        "open_until": open_until_label(ev.arrival_info),
+        "distance_m": None if ev.distance_m is None else int(round(ev.distance_m, -1)),
+        "open_state": info.state if info else "unknown",
+        "open_until": open_until_label(info),
+        "closes_in_min_after_arrival": info.closes_in_min if info else None,
+        "opens_at": info.opens_at if info else None,
         "rating": p.rating,
         "reviews": p.reviews,
-        "attributes": p.attribute_labels[:12],
+        "avg_check_tenge": p.avg_check,
+        "attributes": p.attribute_labels[:16],
         "confirmed": [NOUL_LABELS.get(k, k) for k in ev.confirmed],
         "unconfirmed": [NOUL_LABELS.get(k, k) for k in ev.unconfirmed],
         "typical_visit_min": cat.visit_min if cat else None,
         "indoor": cat.indoor if cat else None,
         "chain": None if p.branch_count is None else p.branch_count > 3,
+        "has_phone": bool(p.phone),
     }
 
 
 def context_for_prompt(ctx: Ctx) -> dict:
+    w = ctx.weather or {}
     return {
         "local_time": ctx.now.strftime("%H:%M"),
         "weekday": WEEKDAYS_RU[ctx.now.weekday()],
         "holiday": ctx.catalog.is_holiday(ctx.now.date()),
         "weather": weather_brief(ctx.weather),
+        "temp_c": w.get("temp_c"),
+        "feels_like_c": w.get("feels_like_c"),
+        "wind_ms": w.get("wind_ms"),
+        "precip_now": w.get("precip_now"),
+        "precip_starts_in_min": w.get("precip_starts_in_min"),
+        "minutes_to_sunset": w.get("minutes_to_sunset"),
+        "is_dark": w.get("is_dark"),
         "walk_active": ctx.req.walk_active,
         "transport": TRANSPORT_LABELS.get(ctx.transport, ctx.transport),
     }
@@ -371,7 +388,7 @@ def apply_llm_answer(result: dict, by_slot: dict[str, Evaluated], ctx: Ctx) -> t
         if f.time_budget_min and ev.eta_min is not None:
             room = f.time_budget_min - ev.eta_min * (2 if f.needs_return else 1)
             visit = max(5, min(visit, int(room)))
-        items.append(to_item(ev, ctx.catalog, ctx.transport, why=_trim(it.get("why"), 220), visit_min=visit,
+        items.append(to_item(ev, ctx.catalog, ctx.transport, why=_trim(it.get("why"), 320), visit_min=visit,
                              action=_trim(it.get("action"), 180)))
     return items, _trim(result.get("idea"), 220)
 

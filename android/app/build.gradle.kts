@@ -9,7 +9,7 @@ plugins {
     alias(libs.plugins.room)
 }
 
-// Локальные настройки (не в git): api.baseUrl, mapgl.key, mapgl.styleId, map.baseUrl
+// Локальные настройки (не в git): api.baseUrl, map.baseUrl
 val localProps = Properties().apply {
     val f = rootProject.file("local.properties")
     if (f.exists()) f.inputStream().use { load(it) }
@@ -28,8 +28,6 @@ android {
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "API_BASE_URL", "\"${local("api.baseUrl", "http://10.0.2.2:8080")}\"")
-        buildConfigField("String", "MAPGL_KEY", "\"${local("mapgl.key", "")}\"")
-        buildConfigField("String", "MAPGL_STYLE_ID", "\"${local("mapgl.styleId", "")}\"")
         buildConfigField("String", "MAP_BASE_URL", "\"${local("map.baseUrl", "https://walk.smartcity.local/")}\"")
     }
 

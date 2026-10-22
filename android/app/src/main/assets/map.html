@@ -4,59 +4,33 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <style>
-  html, body, #map { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
-  body { background: #E8EEF0; font-family: sans-serif; -webkit-user-select: none; user-select: none; }
-  body.dark { background: #0F1416; }
-  /* Размеры #map и canvas задаются из JS в пикселях: в части WebView height:100% у canvas даёт 0. */
-  #fallback { position: fixed; left: 0; top: 0; display: none; touch-action: none; }
-  /* Подсказка — стеклянный пузырь, всплывает с пружинным перелётом. */
-  #note { position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 76px); transform: translateX(-50%);
-          max-width: calc(100% - 48px); display: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-          font-size: 12.5px; font-weight: 600; color: #24414a; padding: 9px 16px; border-radius: 999px;
-          background: linear-gradient(180deg, rgba(255,255,255,.97), rgba(236,245,248,.93)); border: 1px solid rgba(255,255,255,.9);
-          box-shadow: 0 8px 22px rgba(10,115,137,.22), 0 2px 6px rgba(0,0,0,.08); animation: pop .5s cubic-bezier(.34,1.56,.64,1); }
-  body.dark #note { color: #cfe3e8; background: linear-gradient(180deg, rgba(34,48,54,.96), rgba(20,30,34,.92)); border-color: rgba(255,255,255,.12); }
-  @keyframes pop { from { opacity: 0; transform: translateX(-50%) scale(.7); } to { opacity: 1; transform: translateX(-50%) scale(1); } }
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+  body { background: #F1F3F8; font-family: sans-serif; -webkit-user-select: none; user-select: none; }
+  body.dark { background: #10131A; }
+  /* Размер canvas задаётся из JS в пикселях: в части WebView height:100% у canvas даёт 0. */
+  #map { position: fixed; left: 0; top: 0; touch-action: none; }
   #safe { position: fixed; left: 0; top: 0; top: env(safe-area-inset-top, 0px); width: 0; height: 0; }
 </style>
 </head>
 <body>
-<div id="map"></div>
-<canvas id="fallback"></canvas>
-<div id="note"></div>
+<canvas id="map"></canvas>
 <div id="safe"></div>
 <script>
 'use strict';
-// Мост Kotlin ↔ JS через WebMessagePort (раздел 7). Без ключа MapGL или без сети — схема на canvas.
-var S = { port: null, map: null, fb: null, markers: [], route: null, user: null, dark: false, scale: true };
-var COLORS = { rec: '#E0A526', cand: '#0E5E73', waypoint: '#7B5EA7', dest: '#C2410C', saved: '#2E7D4F', place: '#C2410C' };
+// Карта: растровые тайлы 2ГИС на canvas (Web Mercator) — без WebGL, работает на любом WebView.
+// Поверх — маркеры, маршрут, точка пользователя. Мост Kotlin ↔ JS через WebMessagePort (раздел 7).
+var COLORS = { rec: '#FF6A00', cand: '#1F6BFF', waypoint: '#8B5CF6', dest: '#FF3D5A', saved: '#12B76A', place: '#FF3D5A' };
+var TILE = 256;
+var S = { port: null, dark: false, scale: true, center: [71.43, 51.128], zoom: 14, markers: [], route: null, user: null };
 
 function send(o) { if (S.port) S.port.postMessage(JSON.stringify(o)); }
-
-// В логе WebView объект ошибки виден как «[object Object]» — разворачиваем его в текст.
-(function () {
-  var orig = console.error.bind(console);
-  console.error = function () {
-    orig.apply(null, Array.prototype.map.call(arguments, function (a) {
-      if (a instanceof Error) return a.name + ': ' + a.message;
-      if (a && typeof a === 'object') { try { return JSON.stringify(a); } catch (e) { return String(a); } }
-      return a;
-    }));
-  };
-})();
 
 function vw() { return window.innerWidth || document.documentElement.clientWidth; }
 function vh() { return window.innerHeight || document.documentElement.clientHeight; }
 // Высота строки состояния: WebView растянут на весь экран, под неё ничего важного не рисуем.
 function safeTop() { var p = document.getElementById('safe'); return p ? p.getBoundingClientRect().top : 0; }
-function fitViewport() {
-  var w = vw() + 'px', h = vh() + 'px';
-  var m = document.getElementById('map'); m.style.width = w; m.style.height = h;
-  var c = document.getElementById('fallback'); c.style.width = w; c.style.height = h;
-  if (S.fb) S.fb.draw();
-}
-window.addEventListener('resize', fitViewport);
-fitViewport();
+
+var cv = document.getElementById('map'), ctx = cv.getContext('2d'), dpr = window.devicePixelRatio || 1;
 
 window.addEventListener('message', function (e) {
   if (e.data === 'init' && e.ports && e.ports[0]) {
@@ -69,126 +43,156 @@ window.addEventListener('message', function (e) {
 
 function handle(c) {
   switch (c.type) {
-    case 'init': init(c); break;
-    case 'setCenter': setCenter(c.center, c.zoom); break;
-    case 'setUserLocation': setUser(c.point || null); break;
-    case 'setMarkers': setMarkers(c.markers || []); break;
-    case 'drawRoute': drawRoute(c.coordinates || [], c.color); break;
+    case 'init':
+      S.dark = !!c.dark;
+      if (S.dark) document.body.classList.add('dark');
+      if (c.center) S.center = c.center;
+      if (c.zoom) S.zoom = c.zoom;
+      redraw();
+      send({ type: 'ready', engine: 'raster' });
+      break;
+    case 'setCenter': S.center = c.center; if (c.zoom) S.zoom = c.zoom; redraw(); break;
+    case 'setUserLocation': S.user = c.point || null; redraw(); break;
+    case 'setMarkers': S.markers = c.markers || []; redraw(); break;
+    case 'drawRoute': S.route = (c.coordinates || []).length > 1 ? { coords: c.coordinates, color: c.color || '#1F6BFF' } : null; redraw(); break;
     case 'fitBounds': fitBounds(c.points || [], c.padding || {}); break;
-    case 'clear': clear(c.what || 'all'); break;
-    case 'setScale': S.scale = !!c.visible; if (S.fb) S.fb.draw(); break;
+    case 'clear':
+      if (c.what === 'markers' || c.what === 'all') S.markers = [];
+      if (c.what === 'route' || c.what === 'all') S.route = null;
+      redraw();
+      break;
+    case 'setScale': S.scale = !!c.visible; redraw(); break;
   }
 }
 
-function note(text) {
-  var n = document.getElementById('note');
-  n.textContent = text; n.style.display = text ? 'block' : 'none';
-  if (text) setTimeout(function () { n.style.display = 'none'; }, 8000); // не закрывает чипы и маркеры
+// ---------- проекция ----------
+function world(lon, lat, z) {
+  var scale = TILE * Math.pow(2, z);
+  var s = Math.sin(lat * Math.PI / 180);
+  return [(lon + 180) / 360 * scale, (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * scale];
+}
+function toScreen(lon, lat) {
+  var c0 = world(S.center[0], S.center[1], S.zoom), p = world(lon, lat, S.zoom);
+  return [p[0] - c0[0] + vw() / 2, p[1] - c0[1] + vh() / 2];
+}
+function toLonLat(x, y) {
+  var scale = TILE * Math.pow(2, S.zoom), c0 = world(S.center[0], S.center[1], S.zoom);
+  var wx = c0[0] + x - vw() / 2, wy = c0[1] + y - vh() / 2;
+  var n = Math.PI - 2 * Math.PI * wy / scale;
+  return [wx / scale * 360 - 180, 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)))];
 }
 
-function init(c) {
-  S.dark = !!c.dark;
-  if (S.dark) document.body.classList.add('dark');
-  if (!c.key) { startFallback(c, 'Нет ключа MapGL: схема без подложки карты'); return; }
-  var s = document.createElement('script');
-  s.src = 'https://mapgl.2gis.com/api/js/v1';
-  s.onload = function () {
-    try { createMapgl(c); } catch (e) { startFallback(c, 'Карта 2ГИС не загрузилась: схема без подложки'); }
-  };
-  s.onerror = function () { startFallback(c, 'Нет связи с картой 2ГИС: схема без подложки'); };
-  document.head.appendChild(s);
+// ---------- тайлы 2ГИС (HD, 512 px на тайл 256) ----------
+var tiles = {}, tileCount = 0;
+function tile(z, x, y) {
+  var n = Math.pow(2, z);
+  if (y < 0 || y >= n) return null;
+  x = ((x % n) + n) % n;
+  var k = z + '/' + x + '/' + y, im = tiles[k];
+  if (!im) {
+    if (tileCount > 400) { tiles = {}; tileCount = 0; }
+    im = new Image();
+    im.onload = function () { im.ok = true; redraw(); };
+    im.src = 'https://tile' + ((x + y) % 4) + '.maps.2gis.com/tiles?x=' + x + '&y=' + y + '&z=' + z + '&v=1&ts=online_hd';
+    tiles[k] = im; tileCount++;
+  }
+  return im.ok ? im : null;
+}
+function drawTiles(w, h) {
+  var z = Math.max(3, Math.min(18, Math.round(S.zoom)));
+  var k = Math.pow(2, S.zoom - z), size = TILE * k;
+  var c = world(S.center[0], S.center[1], z);
+  var x0 = Math.floor((c[0] - w / 2 / k) / TILE), x1 = Math.floor((c[0] + w / 2 / k) / TILE);
+  var y0 = Math.floor((c[1] - h / 2 / k) / TILE), y1 = Math.floor((c[1] + h / 2 / k) / TILE);
+  for (var tx = x0; tx <= x1; tx++) {
+    for (var ty = y0; ty <= y1; ty++) {
+      var sx = (tx * TILE - c[0]) * k + w / 2, sy = (ty * TILE - c[1]) * k + h / 2;
+      var im = tile(z, tx, ty);
+      if (im) { ctx.drawImage(im, sx, sy, size + 0.5, size + 0.5); continue; }
+      // Пока тайл грузится — растягиваем уже загруженного «родителя», чтобы не было пустых квадратов.
+      var n2 = Math.pow(2, z - 1), px = ((Math.floor(tx / 2) % n2) + n2) % n2;
+      var p = tiles[(z - 1) + '/' + px + '/' + Math.floor(ty / 2)];
+      if (p && p.ok) {
+        var half = p.naturalWidth / 2;
+        ctx.drawImage(p, (tx % 2 + 2) % 2 * half, (ty % 2 + 2) % 2 * half, half, half, sx, sy, size + 0.5, size + 0.5);
+      }
+    }
+  }
 }
 
-function createMapgl(c) {
-  var map = new mapgl.Map('map', { center: c.center, zoom: c.zoom || 14, key: c.key, zoomControl: false });
-  if (c.styleId) { try { map.setStyleById(c.styleId); } catch (e) {} }
-  S.map = map;
-  map.on('moveend', function () {
-    var ctr = map.getCenter();
-    send({ type: 'cameraIdle', lon: ctr[0], lat: ctr[1], zoom: map.getZoom() });
-  });
-  longPress(document.getElementById('map'), function (x, y) {
-    var ll = map.unproject([x, y]);
-    send({ type: 'mapLongPress', lon: ll[0], lat: ll[1] });
-  });
-  send({ type: 'ready', engine: 'mapgl' });
+// ---------- отрисовка ----------
+var pending = false;
+function redraw() {
+  if (pending) return;
+  pending = true;
+  requestAnimationFrame(function () { pending = false; draw(); });
 }
-
-function longPress(el, cb) {
-  var timer = null, start = null;
-  el.addEventListener('touchstart', function (e) {
-    if (e.touches.length !== 1) { clearTimeout(timer); return; }
-    var t = e.touches[0]; start = { x: t.clientX, y: t.clientY };
-    timer = setTimeout(function () { cb(start.x, start.y); }, 650);
-  }, { passive: true });
-  el.addEventListener('touchmove', function (e) {
-    if (!start) return;
-    var t = e.touches[0];
-    if (Math.hypot(t.clientX - start.x, t.clientY - start.y) > 12) clearTimeout(timer);
-  }, { passive: true });
-  el.addEventListener('touchend', function () { clearTimeout(timer); }, { passive: true });
+function pill(x, y, w, h) {
+  var r = h / 2;
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.arc(x + w - r, y + r, r, -Math.PI / 2, Math.PI / 2);
+  ctx.lineTo(x + r, y + h); ctx.arc(x + r, y + r, r, Math.PI / 2, 3 * Math.PI / 2); ctx.closePath();
 }
-
-// Маркер-пузырь: радиальный градиент с бликом, белая кромка, мягкая цветная тень, «хвостик» к точке.
-function pinSvg(kind, label) {
-  var color = COLORS[kind] || COLORS.cand;
-  var big = kind === 'rec' || kind === 'dest' || kind === 'place';
-  var w = big ? 46 : 34, h = big ? 56 : 42, r = big ? 17 : 12, cx = w / 2, cy = r + 5;
-  var id = 'g' + kind;
-  var text = label ? '<text x="' + cx + '" y="' + (cy + 5) + '" font-size="' + (big ? 15 : 11) +
-    '" font-family="sans-serif" font-weight="800" text-anchor="middle" fill="#fff">' + label + '</text>' : '';
-  var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">' +
-    '<defs><radialGradient id="' + id + '" cx="35%" cy="30%" r="75%"><stop offset="0" stop-color="#ffffff" stop-opacity=".75"/>' +
-    '<stop offset=".35" stop-color="' + color + '"/><stop offset="1" stop-color="' + color + '"/></radialGradient>' +
-    '<filter id="s" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="' + color +
-    '" flood-opacity=".45"/></filter></defs>' +
-    '<g filter="url(#s)"><path d="M' + cx + ' ' + (h - 3) + ' L' + (cx - 6) + ' ' + (cy + r - 3) + ' L' + (cx + 6) + ' ' + (cy + r - 3) +
-    'Z" fill="' + color + '"/>' +
-    '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="url(#' + id + ')" stroke="#fff" stroke-width="2.5"/></g>' + text + '</svg>';
-  return { url: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg), size: [w, h], anchor: [cx, h - 3] };
-}
-
-function clearMarkers() {
-  S.markers.forEach(function (m) { try { m.destroy(); } catch (e) {} });
-  S.markers = [];
-}
-
-function setMarkers(list) {
-  if (S.fb) { S.fb.markers = list; S.fb.draw(); return; }
-  if (!S.map) return;
-  clearMarkers();
-  list.forEach(function (m) {
-    var pin = pinSvg(m.kind, m.label);
-    var marker = new mapgl.Marker(S.map, {
-      coordinates: [m.lon, m.lat], icon: pin.url, size: pin.size, anchor: pin.anchor,
-      zIndex: m.kind === 'rec' ? 10 : (m.kind === 'dest' ? 9 : 1)
+function draw() {
+  var w = vw(), h = vh();
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = S.dark ? '#10131A' : '#F1F3F8';
+  ctx.fillRect(0, 0, w, h);
+  drawTiles(w, h);
+  if (S.route) {
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    [[11, '#ffffff'], [6, S.route.color]].forEach(function (st) {
+      ctx.beginPath(); ctx.lineWidth = st[0]; ctx.strokeStyle = st[1];
+      S.route.coords.forEach(function (p, i) { var s = toScreen(p[0], p[1]); i ? ctx.lineTo(s[0], s[1]) : ctx.moveTo(s[0], s[1]); });
+      ctx.stroke();
     });
-    marker.on('click', function () { send({ type: 'markerClick', id: m.id }); });
-    S.markers.push(marker);
+  }
+  // Маркеры: плоский яркий круг с белой каймой и «хвостиком», тень — для отрыва от карты.
+  S.markers.slice().sort(function (a, b) { return (a.kind === 'rec') - (b.kind === 'rec'); }).forEach(function (m) {
+    var s = toScreen(m.lon, m.lat), big = m.kind === 'rec' || m.kind === 'dest' || m.kind === 'place';
+    var r = big ? 17 : 11, color = COLORS[m.kind] || COLORS.cand, cy = s[1] - r - 7;
+    ctx.save();
+    ctx.shadowColor = 'rgba(16,24,40,0.28)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 3;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(s[0], cy, r + 3, 0, 2 * Math.PI); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(s[0], s[1]); ctx.lineTo(s[0] - 7, cy + r - 2); ctx.lineTo(s[0] + 7, cy + r - 2); ctx.closePath(); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(s[0], cy, r, 0, 2 * Math.PI); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(s[0], s[1] - 3); ctx.lineTo(s[0] - 4, cy + r - 1); ctx.lineTo(s[0] + 4, cy + r - 1); ctx.closePath(); ctx.fill();
+    if (m.label) {
+      ctx.fillStyle = '#fff'; ctx.font = '800 ' + (big ? 15 : 10) + 'px sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(m.label, s[0], cy + 1);
+    }
   });
-}
-
-function drawRoute(coords, color) {
-  if (S.fb) { S.fb.route = coords.length ? { coords: coords, color: color || '#0E5E73' } : null; S.fb.draw(); return; }
-  if (!S.map) return;
-  if (S.route) { try { S.route.destroy(); } catch (e) {} S.route = null; }
-  if (coords.length < 2) return;
-  S.route = new mapgl.Polyline(S.map, { coordinates: coords, width: 6, color: color || '#0E5E73', width2: 10, color2: '#ffffff' });
-}
-
-function setUser(p) {
-  if (S.fb) { S.fb.user = p; S.fb.draw(); return; }
-  if (!S.map) return;
-  if (S.user) { try { S.user.destroy(); } catch (e) {} S.user = null; }
-  if (!p) return;
-  S.user = new mapgl.CircleMarker(S.map, { coordinates: p, radius: 9, color: '#1E88E5', strokeWidth: 3, strokeColor: '#ffffff', zIndex: 20 });
-}
-
-function setCenter(c, zoom) {
-  if (S.fb) { S.fb.center = c; if (zoom) S.fb.zoom = zoom; S.fb.draw(); return; }
-  if (!S.map) return;
-  S.map.setCenter(c);
-  if (zoom) S.map.setZoom(zoom);
+  if (S.user) {
+    var u = toScreen(S.user[0], S.user[1]);
+    ctx.fillStyle = 'rgba(31,107,255,0.18)';
+    ctx.beginPath(); ctx.arc(u[0], u[1], 24, 0, 2 * Math.PI); ctx.fill();
+    ctx.save();
+    ctx.shadowColor = 'rgba(16,24,40,0.3)'; ctx.shadowBlur = 6; ctx.shadowOffsetY = 2;
+    ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(u[0], u[1], 12, 0, 2 * Math.PI); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = '#1F6BFF'; ctx.beginPath(); ctx.arc(u[0], u[1], 8.5, 0, 2 * Math.PI); ctx.fill();
+  }
+  if (!S.scale) return;
+  // Масштаб и подпись 2ГИС — пилюля под строкой состояния: низ экрана занят поиском и панелью вкладок,
+  // а при открытой шторке и в навигации верх закрывают фильтры и манёвр — тогда она скрыта.
+  var mpp = 156543.03 * Math.cos(S.center[1] * Math.PI / 180) / Math.pow(2, S.zoom);
+  var meters = [50, 100, 200, 500, 1000, 2000, 5000, 10000].filter(function (v) { return v / mpp < w / 3; }).pop() || 50;
+  var label = (meters >= 1000 ? (meters / 1000) + ' км' : meters + ' м') + '  ·  © 2ГИС', bar = meters / mpp, sy = safeTop() + 10;
+  ctx.font = '700 11px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.save();
+  ctx.shadowColor = 'rgba(16,24,40,0.18)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 2;
+  ctx.fillStyle = S.dark ? '#1D2230' : '#ffffff';
+  pill(12, sy, bar + ctx.measureText(label).width + 34, 26); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = S.dark ? '#E6EAF5' : '#101828';
+  pill(24, sy + 11.5, bar, 3); ctx.fill();
+  ctx.fillText(label, 32 + bar, sy + 13.5);
 }
 
 function fitBounds(points, pad) {
@@ -198,195 +202,103 @@ function fitBounds(points, pad) {
     minLon = Math.min(minLon, p[0]); maxLon = Math.max(maxLon, p[0]);
     minLat = Math.min(minLat, p[1]); maxLat = Math.max(maxLat, p[1]);
   });
-  if (S.fb) { S.fb.fit(minLon, minLat, maxLon, maxLat, pad); return; }
-  if (!S.map) return;
-  if (points.length === 1) { S.map.setCenter(points[0]); S.map.setZoom(16); return; }
-  S.map.fitBounds({ southWest: [minLon, minLat], northEast: [maxLon, maxLat] },
-    { padding: { top: pad.top || 80, bottom: pad.bottom || 80, left: pad.left || 40, right: pad.right || 40 } });
+  S.center = [(minLon + maxLon) / 2, (minLat + maxLat) / 2];
+  var w = vw() - (pad.left || 40) - (pad.right || 40), h = vh() - (pad.top || 80) - (pad.bottom || 80);
+  S.zoom = 16;
+  for (var z = 17; z > 3; z -= 0.25) {
+    var a = world(minLon, maxLat, z), b = world(maxLon, minLat, z);
+    if (b[0] - a[0] <= w && b[1] - a[1] <= h) { S.zoom = z; break; }
+  }
+  var shift = ((pad.bottom || 80) - (pad.top || 80)) / 2;
+  var cs = toScreen(S.center[0], S.center[1]);
+  S.center = toLonLat(cs[0], cs[1] + shift);
+  redraw();
 }
 
-function clear(what) {
-  if (what === 'markers' || what === 'all') setMarkers([]);
-  if (what === 'route' || what === 'all') drawRoute([]);
-}
-
-// ---------- Схема без подложки: Web Mercator на canvas, панорама и масштаб жестами ----------
-function startFallback(c, text) {
-  document.getElementById('map').style.display = 'none';
-  var cv = document.getElementById('fallback');
-  cv.style.display = 'block';
-  fitViewport();
-  note(text);
-  var ctx = cv.getContext('2d');
-  var fb = { center: c.center, zoom: c.zoom || 14, markers: [], route: null, user: null };
-  var dpr = window.devicePixelRatio || 1;
-  function size() { cv.width = vw() * dpr; cv.height = vh() * dpr; }
-  function world(lon, lat, z) {
-    var scale = 256 * Math.pow(2, z);
-    var s = Math.sin(lat * Math.PI / 180);
-    return [(lon + 180) / 360 * scale, (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * scale];
-  }
-  function toScreen(lon, lat) {
-    var c0 = world(fb.center[0], fb.center[1], fb.zoom), p = world(lon, lat, fb.zoom);
-    return [(p[0] - c0[0]) + vw() / 2, (p[1] - c0[1]) + vh() / 2];
-  }
-  function toLonLat(x, y) {
-    var scale = 256 * Math.pow(2, fb.zoom), c0 = world(fb.center[0], fb.center[1], fb.zoom);
-    var wx = c0[0] + x - vw() / 2, wy = c0[1] + y - vh() / 2;
-    var lon = wx / scale * 360 - 180;
-    var n = Math.PI - 2 * Math.PI * wy / scale;
-    return [lon, 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)))];
-  }
-  fb.draw = function () {
-    size();
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    var w = vw(), h = vh();
-    ctx.fillStyle = S.dark ? '#0F1416' : '#E8EEF0';
-    ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = S.dark ? '#1c262a' : '#d5dfe2';
-    ctx.lineWidth = 1;
-    var step = 64;
-    for (var x = (w / 2) % step; x < w; x += step) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
-    for (var y = (h / 2) % step; y < h; y += step) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
-    if (fb.route && fb.route.coords.length > 1) {
-      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      var glow = fb.route.color.length === 7 ? fb.route.color + '66' : 'rgba(0,0,0,.25)';
-      // Белая подложка с цветной тенью приподнимает линию маршрута над схемой.
-      [[12, '#ffffff', 12], [6, fb.route.color, 0]].forEach(function (st) {
-        ctx.save();
-        if (st[2]) { ctx.shadowColor = glow; ctx.shadowBlur = st[2]; ctx.shadowOffsetY = 3; }
-        ctx.beginPath(); ctx.lineWidth = st[0]; ctx.strokeStyle = st[1];
-        fb.route.coords.forEach(function (p, i) { var s = toScreen(p[0], p[1]); i ? ctx.lineTo(s[0], s[1]) : ctx.moveTo(s[0], s[1]); });
-        ctx.stroke();
-        ctx.restore();
-      });
-    }
-    fb.markers.forEach(function (m) {
-      var s = toScreen(m.lon, m.lat), big = m.kind === 'rec' || m.kind === 'dest' || m.kind === 'place';
-      var r = big ? 16 : 11, color = COLORS[m.kind] || COLORS.cand, cy = s[1] - r - 6;
-      // Пузырь: цветная тень, «хвостик», градиент с бликом, белая кромка.
-      ctx.save();
-      ctx.shadowColor = color + '88'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 3;
-      ctx.beginPath(); ctx.moveTo(s[0], s[1]); ctx.lineTo(s[0] - 6, cy + r - 3); ctx.lineTo(s[0] + 6, cy + r - 3); ctx.closePath();
-      ctx.fillStyle = color; ctx.fill();
-      var g = ctx.createRadialGradient(s[0] - r * 0.35, cy - r * 0.4, 1, s[0], cy, r);
-      g.addColorStop(0, '#ffffffcc'); g.addColorStop(0.35, color); g.addColorStop(1, color);
-      ctx.beginPath(); ctx.arc(s[0], cy, r, 0, 2 * Math.PI); ctx.fillStyle = g; ctx.fill();
-      ctx.restore();
-      ctx.lineWidth = 2.5; ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.arc(s[0], cy, r, 0, 2 * Math.PI); ctx.stroke();
-      if (m.label) {
-        ctx.fillStyle = '#fff'; ctx.font = '800 ' + (big ? 14 : 10) + 'px sans-serif';
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(m.label, s[0], cy + 1);
-      }
-    });
-    if (fb.user) {
-      var u = toScreen(fb.user[0], fb.user[1]);
-      ctx.save();
-      ctx.beginPath(); ctx.arc(u[0], u[1], 22, 0, 2 * Math.PI); ctx.fillStyle = 'rgba(30,136,229,0.16)'; ctx.fill();
-      ctx.shadowColor = 'rgba(30,136,229,0.6)'; ctx.shadowBlur = 8;
-      var ug = ctx.createRadialGradient(u[0] - 3, u[1] - 3, 1, u[0], u[1], 10);
-      ug.addColorStop(0, '#9fd0ff'); ug.addColorStop(1, '#1E88E5');
-      ctx.beginPath(); ctx.arc(u[0], u[1], 10, 0, 2 * Math.PI); ctx.fillStyle = ug; ctx.fill();
-      ctx.restore();
-      ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.arc(u[0], u[1], 10, 0, 2 * Math.PI); ctx.stroke();
-    }
-    if (!S.scale) return;
-    var mpp = 156543.03 * Math.cos(fb.center[1] * Math.PI / 180) / Math.pow(2, fb.zoom);
-    var meters = [50, 100, 200, 500, 1000, 2000, 5000].filter(function (m) { return m / mpp < w / 3; }).pop() || 50;
-    // Масштаб — стеклянный пузырь под строкой состояния: низ экрана занят поиском и панелью вкладок,
-    // а при открытой шторке и в навигации верх закрывают фильтры и манёвр — тогда линейка скрыта.
-    var label = meters >= 1000 ? (meters / 1000) + ' км' : meters + ' м', bar = meters / mpp, sy = safeTop() + 10;
-    ctx.font = '600 11px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.save();
-    ctx.shadowColor = 'rgba(10,115,137,0.22)'; ctx.shadowBlur = 12; ctx.shadowOffsetY = 3;
-    ctx.fillStyle = S.dark ? 'rgba(28,40,45,0.94)' : 'rgba(255,255,255,0.94)';
-    pill(12, sy, bar + ctx.measureText(label).width + 34, 26); ctx.fill();
-    ctx.restore();
-    ctx.fillStyle = S.dark ? '#cfe3e8' : '#24414a';
-    pill(24, sy + 11.5, bar, 3); ctx.fill();
-    ctx.fillText(label, 32 + bar, sy + 13.5);
-  };
-  function pill(x, y, w, h) {
-    var r = h / 2;
-    ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.arc(x + w - r, y + r, r, -Math.PI / 2, Math.PI / 2);
-    ctx.lineTo(x + r, y + h); ctx.arc(x + r, y + r, r, Math.PI / 2, 3 * Math.PI / 2); ctx.closePath();
-  }
-  fb.fit = function (minLon, minLat, maxLon, maxLat, pad) {
-    fb.center = [(minLon + maxLon) / 2, (minLat + maxLat) / 2];
-    var w = vw() - (pad.left || 40) - (pad.right || 40), h = vh() - (pad.top || 80) - (pad.bottom || 80);
-    for (var z = 18; z > 3; z -= 0.25) {
-      var a = world(minLon, maxLat, z), b = world(maxLon, minLat, z);
-      if (b[0] - a[0] <= w && b[1] - a[1] <= h) { fb.zoom = z; break; }
-    }
-    var shift = ((pad.bottom || 80) - (pad.top || 80)) / 2;
-    var cs = toScreen(fb.center[0], fb.center[1]);
-    fb.center = toLonLat(cs[0], cs[1] + shift);
-    fb.draw();
-  };
-  var drag = null, pinch = null, moved = false, timer = null, vel = { x: 0, y: 0, t: 0 }, glide = null;
-  // Инерция: после броска карта катится дальше и замедляется трением (≈0,92 скорости за кадр).
-  function startGlide() {
-    var last = performance.now();
-    function step(now) {
-      var dt = Math.min(48, now - last); last = now;
-      var k = Math.pow(0.92, dt / 16);
-      vel.x *= k; vel.y *= k;
-      if (Math.hypot(vel.x, vel.y) < 0.02) { glide = null; send({ type: 'cameraIdle', lon: fb.center[0], lat: fb.center[1], zoom: fb.zoom }); return; }
-      fb.center = toLonLat(vw() / 2 - vel.x * dt, vh() / 2 - vel.y * dt);
-      fb.draw();
-      glide = requestAnimationFrame(step);
-    }
+// ---------- жесты: панорама с инерцией и трением, щипок, двойной тап, долгое нажатие ----------
+var drag = null, pinch = null, moved = false, timer = null, vel = { x: 0, y: 0, t: 0 }, glide = null, lastTap = 0;
+function idle() { send({ type: 'cameraIdle', lon: S.center[0], lat: S.center[1], zoom: S.zoom }); }
+function startGlide() {
+  var last = performance.now();
+  function step(now) {
+    var dt = Math.min(48, now - last); last = now;
+    var k = Math.pow(0.92, dt / 16); // трение: ≈0,92 скорости за кадр
+    vel.x *= k; vel.y *= k;
+    if (Math.hypot(vel.x, vel.y) < 0.02) { glide = null; idle(); return; }
+    S.center = toLonLat(vw() / 2 - vel.x * dt, vh() / 2 - vel.y * dt);
+    draw();
     glide = requestAnimationFrame(step);
   }
-  cv.addEventListener('touchstart', function (e) {
-    moved = false;
-    if (glide) { cancelAnimationFrame(glide); glide = null; }
-    vel = { x: 0, y: 0, t: performance.now() };
-    if (e.touches.length === 1) {
-      var t = e.touches[0];
-      drag = { x: t.clientX, y: t.clientY };
-      timer = setTimeout(function () { var ll = toLonLat(drag.x, drag.y); send({ type: 'mapLongPress', lon: ll[0], lat: ll[1] }); moved = true; }, 650);
-    } else if (e.touches.length === 2) {
-      clearTimeout(timer);
-      pinch = { d: Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY), z: fb.zoom };
-    }
-  }, { passive: true });
-  cv.addEventListener('touchmove', function (e) {
-    if (e.touches.length === 2 && pinch) {
-      var d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-      fb.zoom = Math.max(3, Math.min(19, pinch.z + Math.log2(d / pinch.d))); moved = true; fb.draw(); return;
-    }
-    if (!drag) return;
-    var t = e.touches[0], dx = t.clientX - drag.x, dy = t.clientY - drag.y;
-    if (Math.hypot(dx, dy) > 6) { moved = true; clearTimeout(timer); }
-    var now = performance.now(), dt = Math.max(1, now - vel.t);
-    vel = { x: 0.8 * dx / dt + 0.2 * vel.x, y: 0.8 * dy / dt + 0.2 * vel.y, t: now }; // px/мс, сглаженно
-    var c0 = toLonLat(vw() / 2 - dx, vh() / 2 - dy);
-    fb.center = c0; drag = { x: t.clientX, y: t.clientY }; fb.draw();
-  }, { passive: true });
-  cv.addEventListener('touchend', function (e) {
-    clearTimeout(timer);
-    if (!moved && drag) {
-      var hit = null, best = 24;
-      fb.markers.forEach(function (m) {
-        var s = toScreen(m.lon, m.lat), d = Math.hypot(s[0] - drag.x, s[1] - 12 - drag.y);
-        if (d < best) { best = d; hit = m; }
-      });
-      if (hit) send({ type: 'markerClick', id: hit.id });
-    }
-    var fresh = performance.now() - vel.t < 60;
-    if (moved && !pinch && fresh && Math.hypot(vel.x, vel.y) > 0.25) startGlide();
-    else if (moved) send({ type: 'cameraIdle', lon: fb.center[0], lat: fb.center[1], zoom: fb.zoom });
-    if (e.touches.length === 0) { drag = null; pinch = null; }
-  }, { passive: true });
-  window.addEventListener('resize', function () { fb.draw(); });
-  // WebView может получить размер позже первой отрисовки — перерисовываем при любом изменении размера.
-  if (window.ResizeObserver) new ResizeObserver(function () { fb.draw(); }).observe(cv);
-  S.fb = fb;
-  fb.draw();
-  console.info('fallback map ready ' + cv.clientWidth + 'x' + cv.clientHeight);
-  send({ type: 'ready', engine: 'fallback' });
+  glide = requestAnimationFrame(step);
 }
+function zoomAround(x, y, dz) {
+  var before = toLonLat(x, y);
+  S.zoom = Math.max(3, Math.min(19, S.zoom + dz));
+  var after = toScreen(before[0], before[1]);
+  S.center = toLonLat(vw() / 2 + (after[0] - x), vh() / 2 + (after[1] - y));
+}
+cv.addEventListener('touchstart', function (e) {
+  moved = false;
+  if (glide) { cancelAnimationFrame(glide); glide = null; }
+  vel = { x: 0, y: 0, t: performance.now() };
+  if (e.touches.length === 1) {
+    var t = e.touches[0];
+    drag = { x: t.clientX, y: t.clientY, x0: t.clientX, y0: t.clientY };
+    timer = setTimeout(function () { var ll = toLonLat(drag.x, drag.y); send({ type: 'mapLongPress', lon: ll[0], lat: ll[1] }); moved = true; }, 650);
+  } else if (e.touches.length === 2) {
+    clearTimeout(timer);
+    var a = e.touches[0], b = e.touches[1];
+    pinch = { d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), z: S.zoom,
+              mx: (a.clientX + b.clientX) / 2, my: (a.clientY + b.clientY) / 2 };
+  }
+}, { passive: true });
+cv.addEventListener('touchmove', function (e) {
+  if (e.touches.length === 2 && pinch) {
+    var a = e.touches[0], b = e.touches[1];
+    var d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    zoomAround(pinch.mx, pinch.my, pinch.z + Math.log2(d / pinch.d) - S.zoom);
+    moved = true; draw(); return;
+  }
+  if (!drag) return;
+  var t = e.touches[0], dx = t.clientX - drag.x, dy = t.clientY - drag.y;
+  if (Math.hypot(t.clientX - drag.x0, t.clientY - drag.y0) > 6) { moved = true; clearTimeout(timer); }
+  if (!moved) return;
+  var now = performance.now(), dt = Math.max(1, now - vel.t);
+  vel = { x: 0.8 * dx / dt + 0.2 * vel.x, y: 0.8 * dy / dt + 0.2 * vel.y, t: now }; // px/мс, сглаженно
+  S.center = toLonLat(vw() / 2 - dx, vh() / 2 - dy);
+  drag.x = t.clientX; drag.y = t.clientY;
+  draw();
+}, { passive: true });
+cv.addEventListener('touchend', function (e) {
+  clearTimeout(timer);
+  if (!moved && drag && !pinch) {
+    var hit = null, best = 26;
+    S.markers.forEach(function (m) {
+      var s = toScreen(m.lon, m.lat), d = Math.hypot(s[0] - drag.x, s[1] - 22 - drag.y);
+      if (d < best) { best = d; hit = m; }
+    });
+    var now = performance.now();
+    if (hit) send({ type: 'markerClick', id: hit.id });
+    else if (now - lastTap < 300) { zoomAround(drag.x, drag.y, 1); redraw(); idle(); now = 0; }
+    lastTap = now;
+  }
+  var fresh = performance.now() - vel.t < 60;
+  if (moved && !pinch && fresh && Math.hypot(vel.x, vel.y) > 0.25) startGlide();
+  else if (moved) idle();
+  if (e.touches.length === 0) { drag = null; pinch = null; }
+  else if (e.touches.length === 1) {
+    // После щипка остался один палец: панорама продолжается от его текущей точки, без скачка.
+    var r = e.touches[0];
+    pinch = null; moved = true;
+    drag = { x: r.clientX, y: r.clientY, x0: r.clientX, y0: r.clientY };
+    vel = { x: 0, y: 0, t: performance.now() };
+  }
+}, { passive: true });
+
+window.addEventListener('resize', redraw);
+// WebView может получить размер позже первой отрисовки — перерисовываем при любом изменении размера.
+if (window.ResizeObserver) new ResizeObserver(redraw).observe(document.body);
+redraw();
 </script>
 </body>
 </html>

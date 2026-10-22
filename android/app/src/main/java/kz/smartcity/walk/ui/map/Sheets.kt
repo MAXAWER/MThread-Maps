@@ -36,7 +36,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -186,7 +185,7 @@ fun RecommendationCard(n: Int, item: AnswerItem, dataSource: String, onClick: ()
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (item.etaMin != null) {
-                    Row(Modifier.bubble(BubbleShapes.Pill, Fills.tint(MaterialTheme.colorScheme.primary), Depth.FLOOR, highlight = 0.15f, rim = 0.2f)
+                    Row(Modifier.bubble(BubbleShapes.Pill, Fills.tint(MaterialTheme.colorScheme.primary), Depth.FLOOR)
                         .padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(transportIcon(item.transport), contentDescription = transportLabel(item.transport), modifier = Modifier.size(18.dp),
                             tint = MaterialTheme.colorScheme.primary)
@@ -229,7 +228,7 @@ fun RecommendationCard(n: Int, item: AnswerItem, dataSource: String, onClick: ()
 private fun AttrPill(text: String, confirmed: Boolean) {
     val color = if (confirmed) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant
     Text(text, style = MaterialTheme.typography.labelMedium, color = color,
-        modifier = Modifier.bubble(BubbleShapes.Pill, Fills.tint(color), Depth.FLOOR, highlight = 0.12f, rim = 0.25f)
+        modifier = Modifier.bubble(BubbleShapes.Pill, Fills.tint(color), Depth.FLOOR)
             .padding(horizontal = 10.dp, vertical = 4.dp))
 }
 
@@ -261,8 +260,7 @@ fun PlanSheet(s: MapUiState, vm: MapViewModel, onOpen2gis: (Target) -> Unit) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             BubbleBadge("${i + 1}", size = 34.dp, fill = if (last) Fills.accent() else Fills.tertiary(),
                                 color = if (last) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onTertiary)
-                            if (!last) Box(Modifier.width(4.dp).height(46.dp).background(Brush.verticalGradient(
-                                listOf(MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.secondary))))
+                            if (!last) Box(Modifier.width(4.dp).height(46.dp).background(MaterialTheme.colorScheme.tertiary))
                         }
                         Spacer(Modifier.width(14.dp))
                         BubbleCard(Modifier.weight(1f).padding(bottom = 10.dp), onClick = { vm.onMarkerClick(leg.to) }, depth = Depth.LOW) {

@@ -117,7 +117,7 @@ fun MapScreen(vm: MapViewModel, modifier: Modifier = Modifier, bottomSpace: Dp =
     val dark = isSystemInDarkTheme()
     val scope = rememberCoroutineScope()
     val map = remember {
-        WebViewMapProvider(context, BuildConfig.MAPGL_KEY, BuildConfig.MAPGL_STYLE_ID, BuildConfig.MAP_BASE_URL, dark,
+        WebViewMapProvider(context, BuildConfig.MAP_BASE_URL, dark,
             vm.state.value.myLocation ?: LatLng(51.128, 71.430)).also { it.load() }
     }
     DisposableEffect(Unit) { onDispose { map.destroy() } }
@@ -300,7 +300,7 @@ private fun PhysicsSheet(sheet: SheetPhysics, modifier: Modifier = Modifier, con
         modifier
             .fillMaxWidth()
             .height(heightDp.coerceAtLeast(96.dp))
-            .bubble(BubbleShapes.XL, Fills.surface(), Depth.SHEET, glow = MaterialTheme.colorScheme.primary, highlight = 0.2f),
+            .bubble(BubbleShapes.XL, Fills.surface(), Depth.SHEET, glow = MaterialTheme.colorScheme.primary),
     ) {
         Box(
             Modifier
@@ -315,7 +315,7 @@ private fun PhysicsSheet(sheet: SheetPhysics, modifier: Modifier = Modifier, con
             contentAlignment = Alignment.Center,
         ) {
             Box(Modifier.size(width = 44.dp, height = 5.dp).bubble(BubbleShapes.Pill,
-                SolidColor(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)), Depth.FLOOR, highlight = 0f, rim = 0f))
+                SolidColor(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)), Depth.FLOOR))
         }
         Box(Modifier.weight(1f).nestedScroll(sheet.nestedScroll)) { content() }
     }

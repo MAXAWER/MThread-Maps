@@ -42,7 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -74,16 +74,14 @@ import kz.smartcity.walk.ui.fx.Fills
 import kz.smartcity.walk.ui.fx.LocalHaptics
 import kz.smartcity.walk.ui.fx.PopIn
 import kz.smartcity.walk.ui.fx.bubble
-import kz.smartcity.walk.ui.fx.lighter
 import kz.smartcity.walk.ui.fx.rememberFrictionFling
 import kz.smartcity.walk.walk.WalkDetector
 
 @Composable
 fun ProfileScreen(vm: ProfileViewModel, modifier: Modifier = Modifier, bottomSpace: Dp = 0.dp) {
     var showPortrait by remember { mutableStateOf(false) }
-    // Матовое стекло: сквозь него видна размытая карта на дальнем слое.
-    Box(modifier.fillMaxSize().background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.62f),
-        MaterialTheme.colorScheme.background.copy(alpha = 0.9f))))) {
+    // Плотная подложка: сквозь неё едва видна размытая карта на дальнем слое.
+    Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background.copy(alpha = 0.96f))) {
         if (showPortrait) PortraitScreen(vm, bottomSpace, onBack = { showPortrait = false })
         else ProfileMain(vm, bottomSpace, onPortrait = { showPortrait = true })
     }
@@ -169,8 +167,8 @@ private fun ProfileMain(vm: ProfileViewModel, bottomSpace: Dp, onPortrait: () ->
         }
         Section(5, "Данные") {
             Text("Удаляет портрет, историю посещений, колоду и кэш на телефоне.", style = MaterialTheme.typography.bodySmall)
-            BubbleButton(onClick = { confirmDelete = true }, fill = Brush.linearGradient(listOf(MaterialTheme.colorScheme.error.lighter(0.2f),
-                MaterialTheme.colorScheme.error)), glow = MaterialTheme.colorScheme.error) { Text("Удалить все данные") }
+            BubbleButton(onClick = { confirmDelete = true }, fill = SolidColor(MaterialTheme.colorScheme.error),
+                glow = MaterialTheme.colorScheme.error) { Text("Удалить все данные") }
         }
         if (BuildConfig.DEBUG) DebugSection(6, vm, ui)
     }
@@ -257,9 +255,9 @@ private fun PortraitScreen(vm: ProfileViewModel, bottomSpace: Dp, onBack: () -> 
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
                         Text("${Categories.name(c.category)} — ${(a * 100).toInt()}%", style = MaterialTheme.typography.bodyMedium)
-                        Box(Modifier.fillMaxWidth().height(12.dp).bubble(BubbleShapes.Pill, Fills.tint(color), Depth.FLOOR, highlight = 0.1f, rim = 0.2f)) {
+                        Box(Modifier.fillMaxWidth().height(12.dp).bubble(BubbleShapes.Pill, Fills.tint(color), Depth.FLOOR)) {
                             Box(Modifier.fillMaxWidth(a).height(12.dp).bubble(BubbleShapes.Pill,
-                                Brush.horizontalGradient(listOf(color.lighter(0.3f), color)), Depth.FLOOR, highlight = 0.35f, rim = 0.3f))
+                                SolidColor(color), Depth.FLOOR))
                         }
                     }
                 }
@@ -270,7 +268,7 @@ private fun PortraitScreen(vm: ProfileViewModel, bottomSpace: Dp, onBack: () -> 
             facts.forEach { f ->
                 val c = ProfileMath.decayed(f.confidence, f.lastConfirmedMs, now)
                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                    .bubble(BubbleShapes.M, Fills.tint(MaterialTheme.colorScheme.primary), Depth.FLOOR, highlight = 0.12f, rim = 0.25f)
+                    .bubble(BubbleShapes.M, Fills.tint(MaterialTheme.colorScheme.primary), Depth.FLOOR)
                     .padding(start = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f).padding(vertical = 10.dp)) {
                         Text("${ProfileRepository.KEY_LABELS[f.key] ?: f.key}: ${f.value}", style = MaterialTheme.typography.bodyMedium,
@@ -289,8 +287,8 @@ private fun PortraitScreen(vm: ProfileViewModel, bottomSpace: Dp, onBack: () -> 
             }
         }
         Spacer(Modifier.height(8.dp))
-        BubbleButton(onClick = { confirmWipe = true }, fill = Brush.linearGradient(listOf(MaterialTheme.colorScheme.error.lighter(0.2f),
-            MaterialTheme.colorScheme.error)), glow = MaterialTheme.colorScheme.error) { Text("Удалить весь портрет") }
+        BubbleButton(onClick = { confirmWipe = true }, fill = SolidColor(MaterialTheme.colorScheme.error),
+            glow = MaterialTheme.colorScheme.error) { Text("Удалить весь портрет") }
     }
     editing?.let { f ->
         var text by remember(f.id) { mutableStateOf(f.value) }

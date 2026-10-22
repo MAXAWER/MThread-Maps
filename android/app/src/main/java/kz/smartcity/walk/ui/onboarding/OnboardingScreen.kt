@@ -53,7 +53,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -85,7 +84,7 @@ fun OnboardingScreen(graph: AppGraph, onDone: () -> Unit) {
     val haptics = LocalHaptics.current
     Column(
         Modifier.fillMaxSize()
-            .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.background)))
+            .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding().navigationBarsPadding().padding(20.dp),
     ) {
         StepDots(step)
@@ -129,7 +128,7 @@ private fun StepDots(step: Int) {
         repeat(3) { i ->
             val w by animateDpAsState(if (i == step) 34.dp else 12.dp, spring(dampingRatio = 0.5f, stiffness = 400f), label = "dot")
             Box(Modifier.width(w).height(12.dp).bubble(kz.smartcity.walk.ui.fx.BubbleShapes.Pill,
-                if (i <= step) Fills.primary() else Fills.glass(0.6f), Depth.FLOOR, highlight = 0.3f))
+                if (i <= step) Fills.primary() else Fills.glass(0.6f), Depth.FLOOR))
         }
     }
 }
@@ -139,7 +138,7 @@ private fun Feature(index: Int, icon: ImageVector, text: String) {
     PopIn(index) {
         BubbleCard(Modifier.fillMaxWidth().padding(vertical = 6.dp), depth = Depth.LOW) {
             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(46.dp).bubble(CircleShape, Fills.primary(), Depth.LOW, highlight = 0.35f), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(46.dp).bubble(CircleShape, Fills.primary(), Depth.LOW), contentAlignment = Alignment.Center) {
                     Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
                 }
                 Spacer(Modifier.width(14.dp))
@@ -235,7 +234,7 @@ private fun TransportStep(graph: AppGraph) {
         color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(18.dp))
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        Box(Modifier.size(120.dp).bubble(CircleShape, Fills.accent(), Depth.FLOAT, glow = MaterialTheme.colorScheme.secondary, highlight = 0.4f),
+        Box(Modifier.size(120.dp).bubble(CircleShape, Fills.accent(), Depth.FLOAT, glow = MaterialTheme.colorScheme.secondary),
             contentAlignment = Alignment.Center) {
             Icon(transportIcon(selected), contentDescription = null, tint = MaterialTheme.colorScheme.onSecondary, modifier = Modifier.size(56.dp))
         }

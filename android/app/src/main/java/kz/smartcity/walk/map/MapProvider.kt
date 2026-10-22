@@ -30,7 +30,7 @@ interface MapProvider {
     fun setCenter(point: LatLng, zoom: Double? = null)
     fun setUserLocation(point: LatLng?)
     fun setMarkers(markers: List<MapMarker>)
-    fun drawRoute(points: List<LatLng>, color: String = "#0E5E73")
+    fun drawRoute(points: List<LatLng>, color: String = "#1F6BFF")
     fun fitBounds(points: List<LatLng>, top: Int = 120, bottom: Int = 360)
     fun clear(what: String = "all")
     /** Линейка масштаба: прячется, когда карту закрывают шторка или навигация. */

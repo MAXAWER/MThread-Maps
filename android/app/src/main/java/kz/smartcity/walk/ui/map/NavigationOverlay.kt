@@ -81,7 +81,7 @@ fun NavigationOverlay(s: NavState, vm: MapViewModel, bottomSpace: Dp, onOpen2gis
         ) {
             Column(Modifier.padding(18.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(64.dp).bubble(CircleShape, Fills.glass(0.25f), Depth.FLOOR, highlight = 0.3f, rim = 0.6f),
+                    Box(Modifier.size(64.dp).bubble(CircleShape, Fills.glass(0.25f), Depth.FLOOR),
                         contentAlignment = Alignment.Center) {
                         AnimatedContent(targetState = maneuverIcon(s), transitionSpec = {
                             (scaleIn(spring(0.5f), initialScale = 0.6f) + fadeIn()) togetherWith fadeOut()

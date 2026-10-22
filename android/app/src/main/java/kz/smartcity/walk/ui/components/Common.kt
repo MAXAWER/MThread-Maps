@@ -69,20 +69,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.graphics.Brush
 import kz.smartcity.walk.data.Categories
 import kz.smartcity.walk.ui.fx.BubbleShapes
 import kz.smartcity.walk.ui.fx.Depth
 import kz.smartcity.walk.ui.fx.Fills
 import kz.smartcity.walk.ui.fx.bubble
-import kz.smartcity.walk.ui.fx.darker
-import kz.smartcity.walk.ui.fx.lighter
 
 @Suppress("DEPRECATION")
 fun categoryIcon(category: String?): ImageVector = when (category) {
@@ -149,9 +147,9 @@ fun attrLabel(key: String): String = when (key) {
 
 /** Группа категории → цвет иллюстрации. */
 fun groupColor(group: String?): Color = when (group) {
-    "food" -> Color(0xFFB8621B); "culture" -> Color(0xFF6A4C93); "walks" -> Color(0xFF2E7D4F)
-    "kids" -> Color(0xFFC2185B); "shopping" -> Color(0xFF0E5E73); "fun" -> Color(0xFF7B5EA7)
-    "sport" -> Color(0xFF1565C0); "night" -> Color(0xFF37474F); else -> Color(0xFF546E7A)
+    "food" -> Color(0xFFFF6A00); "culture" -> Color(0xFF8B5CF6); "walks" -> Color(0xFF00B37E)
+    "kids" -> Color(0xFFFF3D7F); "shopping" -> Color(0xFF1F6BFF); "fun" -> Color(0xFFFF4D2E)
+    "sport" -> Color(0xFF0BA5EC); "night" -> Color(0xFF3B3F9E); else -> Color(0xFF667085)
 }
 
 /** Значок категории — объёмный пузырь цвета группы с бликом и цветной тенью. */
@@ -160,7 +158,7 @@ fun CategoryBadge(category: String?, size: Dp = 40.dp) {
     val color = groupColor(Categories.group(category))
     Box(
         modifier = Modifier.size(size).bubble(CircleShape,
-            Brush.radialGradient(listOf(color.lighter(0.35f), color, color.darker(0.15f))), Depth.LOW, glow = color, highlight = 0.35f),
+            SolidColor(color), Depth.LOW, glow = color),
         contentAlignment = Alignment.Center,
     ) {
         Icon(categoryIcon(category), contentDescription = Categories.name(category), tint = Color.White, modifier = Modifier.size(size * 0.52f))
@@ -170,7 +168,7 @@ fun CategoryBadge(category: String?, size: Dp = 40.dp) {
 @Composable
 fun OpenStateText(state: String, until: String?, modifier: Modifier = Modifier) {
     val (text, color) = when (state) {
-        "open" -> (if (until == "круглосуточно") "Круглосуточно" else if (until != null) "Открыто до $until" else "Открыто") to Color(0xFF2E7D4F)
+        "open" -> (if (until == "круглосуточно") "Круглосуточно" else if (until != null) "Открыто до $until" else "Открыто") to Color(0xFF079455)
         "closed" -> "Закрыто" to MaterialTheme.colorScheme.error
         else -> "Режим работы: нет данных" to MaterialTheme.colorScheme.onSurfaceVariant
     }
@@ -183,7 +181,7 @@ fun RatingText(rating: Double?, reviews: Int?) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.semantics {
         contentDescription = "Рейтинг $rating, отзывов ${reviews ?: 0}"
     }) {
-        Icon(Icons.Filled.Star, contentDescription = null, tint = Color(0xFFE0A526), modifier = Modifier.size(16.dp))
+        Icon(Icons.Filled.Star, contentDescription = null, tint = Color(0xFFFFB800), modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(2.dp))
         Text(String.format(java.util.Locale.US, "%.1f", rating).replace('.', ','), style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold)
@@ -213,7 +211,7 @@ fun SourceBadge(source: String, dataSource: String) {
         else -> "Данные 2ГИС" to MaterialTheme.colorScheme.primary
     }
     Text(text, color = color, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
-        modifier = Modifier.bubble(BubbleShapes.Pill, Fills.tint(color), Depth.FLOOR, highlight = 0.15f, rim = 0.3f)
+        modifier = Modifier.bubble(BubbleShapes.Pill, Fills.tint(color), Depth.FLOOR)
             .padding(horizontal = 10.dp, vertical = 4.dp))
 }
 

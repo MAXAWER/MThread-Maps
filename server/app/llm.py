@@ -109,7 +109,8 @@ class ClaudeService:
         return await self._json_call(
             model=self._s.answer_model, system=prompts.ANSWER_SYSTEM,
             user=json.dumps(payload, ensure_ascii=False), schema=prompts.ANSWER_SCHEMA,
-            effort="low", max_tokens=3000, timeout=self._s.answer_timeout_s, tag="answer",
+            # effort medium: модель взвешивает кандидатов по параметрам; мышление входит в max_tokens.
+            effort=self._s.answer_effort, max_tokens=12000, timeout=self._s.answer_timeout_s, tag="answer",
         )
 
     async def profile_ops(self, payload: dict) -> list[dict] | None:

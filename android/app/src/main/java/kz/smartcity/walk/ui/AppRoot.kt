@@ -1,7 +1,6 @@
 package kz.smartcity.walk.ui
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -47,8 +46,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
@@ -123,11 +120,6 @@ fun AppRoot(graph: AppGraph) {
                     else -> Box(Modifier.fillMaxSize()) // карта: поверх неё ничего
                 }
             }
-            // Туман под панелью вкладок: прокручиваемое содержимое растворяется, а не просвечивает сквозь стекло.
-            AnimatedVisibility(visible = tab != 0, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.BottomCenter)) {
-                Box(Modifier.fillMaxWidth().height(bottomSpace).background(Brush.verticalGradient(
-                    listOf(Color.Transparent, MaterialTheme.colorScheme.background.copy(alpha = 0.94f)))))
-            }
             BubbleNavBar(tab, onTab = { tab = it }, modifier = Modifier.align(Alignment.BottomCenter))
         }
     }
@@ -147,7 +139,7 @@ private fun BubbleNavBar(tab: Int, onTab: (Int) -> Unit, modifier: Modifier = Mo
             .padding(horizontal = 20.dp, vertical = NAV_BAR_MARGIN)
             .fillMaxWidth()
             .height(NAV_BAR_HEIGHT)
-            .bubble(BubbleShapes.Pill, Fills.glass(0.97f), Depth.MODAL, glow = MaterialTheme.colorScheme.primary),
+            .bubble(BubbleShapes.Pill, Fills.surface(), Depth.MODAL),
     ) {
         val itemWidthPx = with(density) { (maxWidth / items.size).toPx() }
         val x = remember { Animatable(tab * itemWidthPx) }
@@ -160,7 +152,7 @@ private fun BubbleNavBar(tab: Int, onTab: (Int) -> Unit, modifier: Modifier = Mo
                 .fillMaxHeight()
                 .padding(6.dp)
                 .graphicsLayer { scaleX = stretch; scaleY = 1f / stretch.coerceAtMost(1.15f) }
-                .bubble(BubbleShapes.Pill, Fills.primary(), Depth.LOW, glow = MaterialTheme.colorScheme.primary, highlight = 0.32f),
+                .bubble(BubbleShapes.Pill, Fills.primary(), Depth.LOW, glow = MaterialTheme.colorScheme.primary),
         )
         Row(Modifier.fillMaxSize()) {
             items.forEachIndexed { i, item ->
