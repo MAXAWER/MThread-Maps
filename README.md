@@ -22,13 +22,15 @@ docs/TZ.md          техническое задание
 
 Каждый сервис подключается своим ключом. С одним ключом 2ГИС места, время в пути и маршруты настоящие, а фильтры и пояснения остаются запасными — классификатор и шаблоны — пока нет ключей Jev и Claude.
 
+Команды даны для macOS и Linux. В Windows вместо `.venv/bin/python` пишите `.venv\Scripts\python`, вместо `./gradlew` — `gradlew.bat`.
+
 Сервер:
 
 ```bash
 cd server
 uv venv --python 3.12 .venv
 uv pip install --python .venv -r requirements-dev.txt
-.venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8080 --no-access-log
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8080 --no-access-log
 ```
 
 Приложение (эмулятор ходит на компьютер по адресу `10.0.2.2:8080` — он прописан по умолчанию):
@@ -57,7 +59,7 @@ cd android
 
 ```bash
 cd server
-.venv/Scripts/python scripts/check_keys.py
+.venv/bin/python scripts/check_keys.py
 ```
 
 Скрипт сохраняет образцы ответов 2ГИС в `server/var/day1/` (не в git): по ним сверяются имена полей (см. «Сверить в первый день»).
@@ -66,9 +68,9 @@ cd server
 
 ```bash
 cd server
-.venv/Scripts/python -m pytest -q                                 # 65 тестов
-.venv/Scripts/python scripts/run_scenarios.py --base http://127.0.0.1:8080 --repeat 3   # сценарии 1–10, инварианты, задержки
-.venv/Scripts/python scripts/jev_calibration.py                   # точность Jev и подбор порога (нужен JEV_API_KEY)
+.venv/bin/python -m pytest -q                                 # 70 тестов
+.venv/bin/python scripts/run_scenarios.py --base http://127.0.0.1:8080 --repeat 3   # сценарии 1–10, инварианты, задержки
+.venv/bin/python scripts/jev_calibration.py                   # точность Jev и подбор порога (нужен JEV_API_KEY)
 ```
 
 | Метод | Путь | Назначение |
