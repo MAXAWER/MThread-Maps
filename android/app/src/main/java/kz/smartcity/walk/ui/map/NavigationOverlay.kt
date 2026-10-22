@@ -131,6 +131,7 @@ private fun departureText(s: NavState, nowMs: Long): String? {
 fun NavigationOverlay(
     s: NavState, vm: MapViewModel, bottomSpace: Dp, wide: Boolean, follow: Boolean,
     compass: Boolean, onCompass: () -> Unit,
+    nextStop: kz.smartcity.walk.data.api.PlanLeg? = null, onNextStop: () -> Unit = {},
     onRecenter: () -> Unit, onOverview: () -> Unit, onOpen2gis: (Target) -> Unit,
 ) {
     val context = LocalContext.current
@@ -188,6 +189,19 @@ fun NavigationOverlay(
             Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 contentColor = MaterialTheme.colorScheme.onSurface, shadowElevation = 6.dp) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (s.arrived && nextStop != null) {
+                        // Маршрут по точкам: эта точка пройдена — следующий этап одним нажатием.
+                        Text("Вы на месте: ${s.dest.name}", style = MaterialTheme.typography.titleMedium)
+                        Text("Дальше: ${nextStop.purpose.replaceFirstChar { it.uppercase() }} — ${nextStop.name}",
+                            style = MaterialTheme.typography.headlineSmall)
+                        Text(listOfNotNull("${nextStop.etaMin} мин в пути", nextStop.routeLabel).joinToString(" · "),
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Button(onClick = onNextStop, modifier = Modifier.weight(1f)) { Text("Поехали дальше") }
+                            FilledTonalButton(onClick = { vm.stopNavigation() }, modifier = Modifier.weight(1f)) { Text("Завершить") }
+                        }
+                        return@Column
+                    }
                     if (s.arrived) {
                         Text("Вы на месте", style = MaterialTheme.typography.headlineSmall)
                         Text(s.dest.name, style = MaterialTheme.typography.titleMedium)

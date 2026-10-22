@@ -172,7 +172,8 @@ class ClaudeService:
         except json.JSONDecodeError:
             return None
 
-    async def agent_loop(self, user_payload: dict, execute: ToolExecutor, on_turn=None, on_web=None) -> dict | None:
+    async def agent_loop(self, user_payload: dict, execute: ToolExecutor, on_turn=None, on_web=None,
+                         validate=None) -> dict | None:
         """Агент Sonnet 5.5 с инструментами 2ГИС и серверным веб-поиском. Возвращает вход submit_answer или None.
 
         Адаптивное мышление включено у модели по умолчанию, глубину задаёт effort. tool_choice — только auto
@@ -187,9 +188,10 @@ class ClaudeService:
         tools = prompts.AGENT_TOOLS + web
         calls = 0
         nudged = False
+        revised = False
 
         async def run() -> dict | None:
-            nonlocal calls, nudged, tools
+            nonlocal calls, nudged, tools, revised
             for _ in range(max_calls + 4):
                 if on_turn:
                     await on_turn(calls)
@@ -229,8 +231,14 @@ class ClaudeService:
                     continue
                 uses = [b for b in resp.content if b.type == "tool_use"]
                 submit = next((u for u in uses if u.name == "submit_answer"), None)
+                problem = None
                 if submit is not None:
-                    return dict(submit.input)
+                    # Проверка ответа (все шаги запроса закрыты, места настоящие): один раз возвращаем на доработку.
+                    problem = validate(dict(submit.input)) if validate and not revised else None
+                    if problem is None:
+                        return dict(submit.input)
+                    revised = True
+                    log.warning("agent: answer sent back: %s", problem[:200])
                 messages.append({"role": "assistant", "content": resp.content})
                 if not uses:
                     if nudged:
@@ -240,6 +248,9 @@ class ClaudeService:
                     continue
                 results = []
                 for use in uses:
+                    if use.name == "submit_answer":
+                        results.append({"type": "tool_result", "tool_use_id": use.id, "content": problem or "", "is_error": True})
+                        continue
                     calls += 1
                     if calls > max_calls:
                         out, is_error = {"error": "Лимит вызовов исчерпан. Вызови submit_answer по найденному."}, True
@@ -287,6 +298,9 @@ class ClaudeService:
                 messages.append({"role": "assistant", "content": resp.content})
                 results = []
                 for use in uses:
+                    if use.name == "submit_answer":
+                        results.append({"type": "tool_result", "tool_use_id": use.id, "content": problem or "", "is_error": True})
+                        continue
                     calls += 1
                     if calls > max_calls:
                         out, is_error = {"error": "Лимит вызовов инструментов исчерпан. Ответь по найденному."}, True

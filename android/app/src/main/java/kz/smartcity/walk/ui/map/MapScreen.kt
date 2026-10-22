@@ -310,6 +310,8 @@ fun MapScreen(vm: MapViewModel, hazeState: HazeState, modifier: Modifier = Modif
             val current = nav
             if (current != null) NavigationOverlay(current, vm, bottomSpace = bottomSpace, wide = wide, follow = follow,
                 compass = camMode == CamMode.COMPASS,
+                nextStop = s.planLeg?.let { vm.nextPlanLeg() },
+                onNextStop = { haptics?.tap(); follow = true; s.planLeg?.let { vm.startPlanLeg(it + 1) } },
                 onCompass = {
                     haptics?.tap()
                     if (camMode == CamMode.COMPASS) { camMode = CamMode.FREE; scope.launch { camera.resetBearing() } }

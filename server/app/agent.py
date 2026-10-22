@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 MATRIX_TRANSPORTS = {"walking", "bicycle", "scooter", "driving", "taxi"}
 # Квота демо-ключа 2ГИС: не больше трёх проверок маршрута на один запрос.
 MAX_ROUTE_CHECKS = 3
-MAX_TRIP_CHECKS = 2
+MAX_TRIP_CHECKS = 3
 LEG_LABELS = {"bus": "автобус", "trolleybus": "троллейбус", "tram": "трамвай", "shuttle_bus": "маршрутка",
               "metro": "метро", "light_rail": "ЛРТ", "lrt": "ЛРТ"}
 
@@ -44,6 +44,9 @@ class SearchAgent:
         self.trip_checks = 0
         self.legs: dict[tuple, dict] = {}
         self.shown: dict[str, Evaluated] = {}
+        # Прошлый ответ (уточнение «добавь аптеку», «убери парк») — его места доступны по тем же id.
+        for it in (req.previous.items if req.previous else []):
+            self.places.setdefault(it.poi_id, Place(id=it.poi_id, name=it.name, lat=it.lat, lon=it.lon))
         # Сохранённые места пользователя — как обычные места с id saved:N.
         for i, sp in enumerate(req.saved_places):
             self.places[f"saved:{i}"] = Place(id=f"saved:{i}", name=sp.name, lat=sp.lat, lon=sp.lon, address=sp.address)
@@ -70,6 +73,10 @@ class SearchAgent:
             "category_interest": dict(sorted(self.req.profile_affinity.items(), key=lambda kv: -kv[1])[:8]),
             "saved_places": [{"place_id": f"saved:{i}", "name": sp.name, "address": sp.address}
                              for i, sp in enumerate(self.req.saved_places)],
+            "previous": None if not self.req.previous else {
+                "query": self.req.previous.query, "summary": self.req.previous.summary, "trip": self.req.previous.trip,
+                "items": [{"place_id": it.poi_id, "name": it.name, "purpose": it.purpose, "transport": it.transport}
+                          for it in self.req.previous.items]},
         }
 
     # ---------- инструменты ----------
@@ -78,7 +85,8 @@ class SearchAgent:
             return await self._search(str(args["query"]), int(args.get("radius_m") or 3000))
         if name == "check_trip":
             return await self._trip([str(p) for p in args.get("place_ids") or []],
-                                    [int(v) for v in args.get("visit_min") or []], str(args["transport"]))
+                                    [int(v) for v in args.get("visit_min") or []],
+                                    [str(v) for v in args.get("transports") or []])
         if name == "find_address":
             return await self._address(str(args["query"]))
         if name == "place_details":
@@ -110,27 +118,28 @@ class SearchAgent:
                 "places": out, "note": None if out else "Ничего не найдено — попробуй другую формулировку или радиус."}
 
     async def _leg(self, a: tuple[float, float], b: tuple[float, float], transport: str) -> dict:
-        """Один этап поездки: время, расстояние, линия (запросы 2ГИС кэшируются)."""
+        """Один этап поездки со всеми вариантами 2ГИС (автобусы — до 6, остальное — с альтернативами); кэшируется."""
         key = (round(a[0], 4), round(a[1], 4), round(b[0], 4), round(b[1], 4), transport)
         if key in self.legs:
             return self.legs[key]
         try:
             data = await self.svc.places.route([a, b], transport)
-            opt = (data.get("options") or [data])[0]
-            leg = {"duration_s": int(opt.get("total_duration_s") or 0), "distance_m": int(opt.get("total_distance_m") or 0),
-                   "geometry": opt.get("geometry") or [], "estimate": False}
+            options = label_route_options(data) if data.get("options") else [{**data, "id": "0"}]
+            leg = {"options": options, "estimate": False}
         except DgisError:
             dist = haversine_m(a[0], a[1], b[0], b[1]) * DETOUR
             speed = self.svc.settings.speeds_kmh.get(transport if transport in MATRIX_TRANSPORTS else "walking", 4.5)
-            leg = {"duration_s": int(dist / (speed * 1000 / 3600)), "distance_m": int(dist),
-                   "geometry": [[a[1], a[0]], [b[1], b[0]]], "estimate": True}
+            leg = {"options": [{"id": "est", "label": "оценка по прямой", "total_duration_s": int(dist / (speed * 1000 / 3600)),
+                                "total_distance_m": int(dist), "geometry": [[a[1], a[0]], [b[1], b[0]]], "maneuvers": [],
+                                "legs": []}], "estimate": True}
         self.legs[key] = leg
         return leg
 
-    async def _trip(self, place_ids: list[str], visits: list[int], transport: str) -> dict:
-        """Маршрут через несколько точек в заданном порядке: этапы, прибытие и уход, открыто ли к приходу."""
-        if not 2 <= len(place_ids) <= 5:
-            return {"error": "нужно от 2 до 5 точек"}
+    async def _trip(self, place_ids: list[str], visits: list[int], transports: list[str]) -> dict:
+        """Маршрут через несколько точек в заданном порядке: по каждому этапу — варианты дороги (какой автобус,
+        отправление, пересадки), прибытие и уход, открыто ли к приходу. Время считается по самому быстрому варианту."""
+        if not 1 <= len(place_ids) <= 6:
+            return {"error": "нужно от 1 до 6 точек"}
         if self.trip_checks >= MAX_TRIP_CHECKS:
             return {"error": f"лимит проверок маршрута ({MAX_TRIP_CHECKS}) исчерпан — выбери из уже проверенных"}
         self.trip_checks += 1
@@ -144,40 +153,69 @@ class SearchAgent:
         await self.emit(("progress", {"text": "Проверяю порядок: " + " → ".join(p.name for p in places)[:120]}))
         stops, here, clock = [], self.origin, 0.0
         for i, p in enumerate(places):
+            transport = transports[i] if i < len(transports) else (transports[-1] if transports else self.transport)
             leg = await self._leg(here, (p.lat, p.lon), transport)
-            clock += leg["duration_s"] / 60
+            best = min(leg["options"], key=lambda o: o.get("total_duration_s") or 0)
+            clock += (best.get("total_duration_s") or 0) / 60
             info = open_at(p.schedule, self.now, clock)
             visit = max(5, min(visits[i] if i < len(visits) else 30, 480))
-            stops.append({"place_id": p.id, "name": p.name, "travel_min": max(1, round(leg["duration_s"] / 60)),
-                          "distance_m": leg["distance_m"], "arrive_at": (self.now + timedelta(minutes=clock)).strftime("%H:%M"),
+            stops.append({"place_id": p.id, "name": p.name, "transport": transport,
+                          "route_options": [self._option_summary(o) for o in leg["options"][:4]],
+                          "fastest_option_id": best.get("id"), "estimate": leg["estimate"],
+                          "arrive_at": (self.now + timedelta(minutes=clock)).strftime("%H:%M"),
                           "open_on_arrival": info.state if info else "unknown",
                           "leave_at": (self.now + timedelta(minutes=clock + visit)).strftime("%H:%M")})
             clock += visit
             here = (p.lat, p.lon)
-        return {"transport": transport, "stops": stops, "total_min": round(clock),
-                "finish_at": (self.now + timedelta(minutes=clock)).strftime("%H:%M")}
+        return {"stops": stops, "total_min": round(clock), "finish_at": (self.now + timedelta(minutes=clock)).strftime("%H:%M"),
+                "note": "Для каждой точки выбери route_option_id из route_options её этапа (по умолчанию — самый быстрый)."}
 
-    async def _plan(self, items: list[AnswerItem], visits: list[int], purposes: list[str]) -> Plan:
-        """План по точкам ответа в его порядке: линия через все точки и расписание прибытия."""
-        legs, geometry, here, clock, total_dist = [], [], self.origin, 0.0, 0
+    async def _plan(self, items: list[AnswerItem], visits: list[int], purposes: list[str], option_ids: list[str | None]) -> Plan:
+        """План по точкам ответа в его порядке: на каждом этапе — выбранный агентом вариант дороги целиком
+        (линия, манёвры, автобусы и остановки), расписание прибытия и ухода."""
+        legs, geometry, here, clock = [], [], self.origin, 0.0
         for i, it in enumerate(items):
             p = self.places[it.poi_id]
             leg = await self._leg(here, (p.lat, p.lon), it.transport)
-            clock += leg["duration_s"] / 60
+            opt = next((o for o in leg["options"] if str(o.get("id")) == str(option_ids[i])), None) or \
+                min(leg["options"], key=lambda o: o.get("total_duration_s") or 0)
+            dur = (opt.get("total_duration_s") or 0) / 60
+            clock += dur
             info = open_at(p.schedule, self.now, clock)
             visit = visits[i]
-            geometry += leg["geometry"]
-            total_dist += leg["distance_m"]
+            geometry += opt.get("geometry") or []
+            route = None if leg["estimate"] else {
+                "id": str(opt.get("id")), "label": opt.get("label"), "total_distance_m": opt.get("total_distance_m") or 0,
+                "total_duration_s": opt.get("total_duration_s") or 0, "geometry": opt.get("geometry") or [],
+                "maneuvers": opt.get("maneuvers") or [], "legs": opt.get("legs") or [], "transfers": opt.get("transfers"),
+                "walk_text": opt.get("walk_text"), "departure": opt.get("departure"),
+                "departure_in_min": opt.get("departure_in_min"), "next_departures": opt.get("next_departures") or [],
+                "interval_min": opt.get("interval_min")}
             legs.append(PlanLeg(to=p.id, name=p.name, purpose=purposes[i] or "Остановка", transport=it.transport,
-                                eta_min=max(1, round(leg["duration_s"] / 60)), lat=p.lat, lon=p.lon,
+                                eta_min=max(1, round(dur)), lat=p.lat, lon=p.lon,
                                 open_state=info.state if info else "unknown", open_until=open_until_label(info),
                                 arrive_at=(self.now + timedelta(minutes=clock)).strftime("%H:%M"),
                                 leave_at=(self.now + timedelta(minutes=clock + visit)).strftime("%H:%M"),
-                                visit_min=visit, distance_m=leg["distance_m"]))
+                                visit_min=visit, distance_m=opt.get("total_distance_m") or 0,
+                                route=route, route_label=_route_label(opt, it.transport)))
             clock += visit
             here = (p.lat, p.lon)
         return Plan(legs=legs, total_min=round(clock), rain_exposure_min=0, geometry=geometry)
 
+    def validate(self, result: dict) -> str | None:
+        """Проверка ответа перед показом: каждый шаг запроса закрыт местом или объяснён, места — из инструментов."""
+        unknown = [str(it.get("place_id")) for it in result.get("items") or [] if str(it.get("place_id")) not in self.places]
+        if unknown:
+            return (f"place_id {', '.join(unknown)} не встречались в результатах инструментов. Используй только id из "
+                    "search_places, find_address, saved_places или previous и снова вызови submit_answer.")
+        steps = [s for s in result.get("requested_steps") or [] if str(s).strip()]
+        items = result.get("items") or []
+        skipped = result.get("skipped") or []
+        if len(steps) >= 2 and len(items) + len(skipped) < len(steps):
+            return (f"В запросе {len(steps)} шагов ({'; '.join(map(str, steps))}), а в ответе мест {len(items)} и пропусков "
+                    f"{len(skipped)}. Добавь место на каждый шаг (trip = true, порядок посещения) или перечисли невыполнимые "
+                    "шаги в skipped с причиной, затем снова вызови submit_answer.")
+        return None
     async def _address(self, query: str) -> dict:
         await self.emit(("progress", {"text": f"Ищу адрес: {query}"}))
         try:
@@ -303,7 +341,8 @@ class SearchAgent:
             kept = {it.poi_id for it in items}
             src = [r for r in raw if str(r.get("place_id")) in kept]
             plan = await self._plan(items, [max(5, min(int(r.get("visit_min") or 30), 480)) for r in src],
-                                    [_trim(r.get("purpose"), 40) or "" for r in src])
+                                    [_trim(r.get("purpose"), 40) or "" for r in src],
+                                    [r.get("route_option_id") for r in src])
             route_out, route_opt = None, None
         remember = None
         rem = result.get("remember") or None
@@ -316,7 +355,22 @@ class SearchAgent:
         return Answer(mode=mode, items=items, idea=_trim(result.get("idea"), 300), data_source=self.svc.data_source,
                       summary=_trim(result.get("summary"), 300), understood=[str(u)[:40] for u in (result.get("understood") or [])[:5]],
                       route=route_out, route_option_id=route_opt, remember=remember, plan=plan,
+                      skipped=[f"{_trim(s.get('step'), 60)} — {_trim(s.get('reason'), 140)}"
+                               for s in (result.get("skipped") or [])[:5] if s.get("step")],
                       note=None if items else (_trim(result.get("summary"), 300) or "Подходящих мест не нашлось."))
+
+
+def _route_label(o: dict, transport: str) -> str:
+    """Подпись выбранного варианта: «Автобус 47 · отправление 17:13» или «Пешком · быстрее всего»."""
+    rides = [leg for leg in o.get("legs") or [] if leg.get("kind") != "walk"]
+    if rides:
+        parts = [f"{LEG_LABELS.get(leg.get('kind'), 'транспорт').capitalize()} {', '.join(leg.get('names') or [])}".strip()
+                 for leg in rides]
+        tail = (f" · отправление {o['departure']}" if o.get("departure")
+                else f" · каждые ~{o['interval_min']} мин" if o.get("interval_min") else "")
+        return " → ".join(parts) + tail
+    label = TRANSPORT_LABELS.get(transport, transport)
+    return f"{label} · {o['label'].lower()}" if o.get("label") else label
 
 
 def _menu_page(p: Place) -> str | None:
@@ -358,7 +412,8 @@ async def agent_mode(req: SearchRequest, svc: Services, weather: dict | None, la
 
     async def run() -> None:
         try:
-            result = await svc.llm.agent_loop(agent.payload(), agent.execute, on_turn=on_turn, on_web=on_web)
+            result = await svc.llm.agent_loop(agent.payload(), agent.execute, on_turn=on_turn, on_web=on_web,
+                                              validate=agent.validate)
             if result is None:
                 await queue.put(("fallback", {}))
                 return

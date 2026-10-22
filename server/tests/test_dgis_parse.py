@@ -127,3 +127,20 @@ async def test_matrix_chunks_and_maps_ids():
     assert len(bodies) == 2 and all(len(b["targets"]) <= 4 and len(b["sources"]) == 1 for b in bodies)
     assert set(res) == {(0, t) for t in range(1, 7)}
     assert client.counters.counts["matrix"] == 2
+
+
+def test_parse_osm_route_alternatives_and_russian_maneuvers():
+    from app.dgis import parse_osm_route
+    step = lambda t, mod, name, loc: {"maneuver": {"type": t, "modifier": mod, "location": loc}, "name": name,
+                                      "distance": 100, "duration": 80}
+    data = {"code": "Ok", "routes": [
+        {"distance": 900, "duration": 700, "geometry": {"coordinates": [[71.40, 51.08], [71.41, 51.09]]},
+         "legs": [{"steps": [step("depart", None, "Кабанбай батыра", [71.40, 51.08]),
+                             step("turn", "left", "Сыганак", [71.405, 51.085]),
+                             step("arrive", None, "", [71.41, 51.09])]}]},
+        {"distance": 1000, "duration": 800, "geometry": {"coordinates": [[71.40, 51.08], [71.41, 51.09]]}, "legs": []}]}
+    out = parse_osm_route(data)
+    assert out["total_duration_s"] == 700 and len(out["options"]) == 2 and out["options"][1]["id"] == "1"
+    texts = [m["text"] for m in out["maneuvers"]]
+    assert texts == ["Начните движение по Кабанбай батыра", "Поверните налево на Сыганак", "Вы на месте"]
+    assert out["maneuvers"][1]["turn_direction"] == "left"

@@ -89,6 +89,23 @@ class RememberOffer(BaseModel):
     lon: float
 
 
+class PreviousItem(BaseModel):
+    poi_id: str = Field(max_length=120)
+    name: str = Field(max_length=200)
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    purpose: str | None = Field(default=None, max_length=60)
+    transport: str | None = None
+
+
+class PreviousAnswer(BaseModel):
+    """Прошлый ответ на экране: новый запрос может его уточнять («добавь аптеку», «убери парк»)."""
+    query: str = Field(max_length=500)
+    summary: str | None = Field(default=None, max_length=400)
+    trip: bool = False
+    items: list[PreviousItem] = Field(default_factory=list, max_length=8)
+
+
 class SearchRequest(GeoRequest):
     query: str = Field(min_length=1, max_length=500)
     local_time: datetime
@@ -99,6 +116,7 @@ class SearchRequest(GeoRequest):
     lang: str | None = None
     filters: JevFilters | None = None  # фильтры, правленные клиентом: Jev не вызывается повторно
     saved_places: list[SavedPlaceIn] = Field(default_factory=list, max_length=20)
+    previous: PreviousAnswer | None = None
 
     @field_validator("local_time")
     @classmethod
@@ -170,6 +188,8 @@ class PlanLeg(BaseModel):
     leave_at: str | None = None    # уход после visit_min
     visit_min: int | None = None
     distance_m: int | None = None
+    route: dict | None = None       # выбранный вариант дороги до этой точки (как RouteOption)
+    route_label: str | None = None  # «Автобус 47 · отправление 17:13»
 
 
 class Plan(BaseModel):
@@ -195,6 +215,7 @@ class Answer(BaseModel):
     route: dict | None = None             # маршрут к первому месту (RouteOut), если просили «как добраться»
     route_option_id: str | None = None    # выбранный агентом вариант маршрута
     remember: RememberOffer | None = None  # предложение запомнить место (с разрешения)
+    skipped: list[str] = Field(default_factory=list)  # шаги запроса, которые выполнить не удалось, с причиной
 
 
 class PlacePoint(BaseModel):

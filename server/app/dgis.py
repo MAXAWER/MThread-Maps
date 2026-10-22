@@ -244,6 +244,52 @@ def label_route_options(data: dict) -> list[dict]:
     return options
 
 
+# Запасная прокладка по дорогам OpenStreetMap (FOSSGIS OSRM), если 2ГИС не строит маршрут (лимит ключа, сбой).
+OSM_PROFILES = {"walking": "routed-foot", "bicycle": "routed-bike", "scooter": "routed-bike",
+                "driving": "routed-car", "taxi": "routed-car"}
+OSM_TURNS = {"left": "налево", "right": "направо", "slight left": "плавно налево", "slight right": "плавно направо",
+             "sharp left": "резко налево", "sharp right": "резко направо", "uturn": "на разворот", "straight": "прямо"}
+
+
+def _osm_step_text(step: dict) -> str:
+    m = step.get("maneuver") or {}
+    kind, mod = m.get("type"), m.get("modifier")
+    road = step.get("name") or ""
+    on = f" на {road}" if road else ""
+    if kind == "depart":
+        return f"Начните движение{(' по ' + road) if road else ''}"
+    if kind == "arrive":
+        return "Вы на месте"
+    if kind in ("roundabout", "rotary"):
+        n = m.get("exit")
+        return f"На круге — {n}-й съезд{on}" if n else f"Проезжайте круг{on}"
+    turn = OSM_TURNS.get(mod or "", "")
+    if not turn or turn == "прямо":
+        return f"Продолжайте прямо{on}"
+    return f"Поверните {turn}{on}"
+
+
+def parse_osm_route(data: dict) -> dict:
+    """Ответ OSRM → тот же формат, что у 2ГИС: варианты с линией [lon, lat] и манёврами по-русски."""
+    routes = data.get("routes") or []
+    if data.get("code") != "Ok" or not routes:
+        raise DgisError(f"osm: {data.get('code') or 'no route'}")
+    options = []
+    for i, r in enumerate(routes[:3]):
+        maneuvers = []
+        for leg in r.get("legs") or []:
+            for st in leg.get("steps") or []:
+                loc = (st.get("maneuver") or {}).get("location") or [0, 0]
+                mod = (st.get("maneuver") or {}).get("modifier") or ""
+                maneuvers.append({"text": _osm_step_text(st), "icon": None, "type": (st.get("maneuver") or {}).get("type"),
+                                  "turn_direction": mod.replace("slight ", "").replace("sharp ", "") if "left" in mod or "right" in mod else None,
+                                  "lat": loc[1], "lon": loc[0], "distance_m": int(st.get("distance") or 0),
+                                  "duration_s": int(st.get("duration") or 0)})
+        options.append({"id": str(i), "total_distance_m": int(r.get("distance") or 0), "total_duration_s": int(r.get("duration") or 0),
+                        "geometry": (r.get("geometry") or {}).get("coordinates") or [], "maneuvers": maneuvers})
+    return {**options[0], "options": options}
+
+
 PT_MAX_OPTIONS = 6
 
 
@@ -517,6 +563,38 @@ class DgisClient:
     async def route(self, points: list[tuple[float, float]], transport: str) -> dict:
         if transport == "public_transport":
             return await self.public_transport(points[0], points[-1])
+        try:
+            return await self._dgis_route(points, transport)
+        except DgisError as exc:
+            if transport not in OSM_PROFILES:
+                raise
+            log.warning("2gis routing failed (%s), using OpenStreetMap", str(exc)[:80])
+            out = await self._osm_route(points, transport)
+            out["note"] = "Маршрут по картам OpenStreetMap: прокладка 2ГИС сейчас недоступна."
+            return out
+
+    async def _osm_route(self, points: list[tuple[float, float]], transport: str) -> dict:
+        key = ("osm", transport, tuple((round(lat, 4), round(lon, 4)) for lat, lon in points))
+        data = self._short_cache.get(key)
+        if data is None:
+            coords = ";".join(f"{lon},{lat}" for lat, lon in points)
+            url = f"https://routing.openstreetmap.de/{OSM_PROFILES[transport]}/route/v1/driving/{coords}"
+            try:
+                r = await self._http.get(url, params={"overview": "full", "geometries": "geojson", "steps": "true",
+                                                      "alternatives": "true" if len(points) == 2 else "false"},
+                                         headers={"User-Agent": "Progulka-hackathon/0.4 (github.com/MAXAWER/MThread-Maps)"},
+                                         timeout=10.0)
+            except httpx.HTTPError as exc:
+                raise DgisError(f"osm: {type(exc).__name__}") from exc
+            if r.status_code >= 400:
+                raise DgisError(f"osm: http {r.status_code}")
+            data = r.json()
+            self._short_cache.set(key, data)
+        out = parse_osm_route(data)
+        out["source"] = "osm"
+        return out
+
+    async def _dgis_route(self, points: list[tuple[float, float]], transport: str) -> dict:
         body = {
             "points": [{"type": "stop", "lat": lat, "lon": lon} for lat, lon in points],
             "transport": transport,

@@ -44,6 +44,8 @@ import kz.smartcity.walk.data.QuickPlace
 import kz.smartcity.walk.data.QuickPlaces
 import kz.smartcity.walk.data.api.RememberOffer
 import kz.smartcity.walk.data.api.SavedPlaceIn
+import kz.smartcity.walk.data.api.PreviousAnswer
+import kz.smartcity.walk.data.api.PreviousItem
 import kz.smartcity.walk.nav.NavigationService
 import kz.smartcity.walk.walk.WalkDetector
 import kz.smartcity.walk.walk.WalkService
@@ -94,6 +96,8 @@ data class MapUiState(
     val hints: List<Hint> = emptyList(),
     /** ИИ предложил запомнить место — ждём согласия. */
     val remember: RememberOffer? = null,
+    /** Навигация по плану: номер текущего этапа (точки), иначе null. */
+    val planLeg: Int? = null,
 )
 
 /** Подсказка запроса: текст и ключ иконки. */
@@ -272,6 +276,12 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
     fun search(text: String, filters: JevFilters? = null) {
         val query = text.trim()
         if (query.isEmpty()) return
+        // Ответ ещё на экране — новый запрос может его уточнять: передаём прошлые точки ИИ.
+        val previous = _state.value.answer?.takeIf { _state.value.sheet != SheetMode.NONE && filters == null }?.let { a ->
+            val stops = a.plan?.legs?.map { PreviousItem(it.to, it.name, it.lat, it.lon, it.purpose, it.transport) }
+                ?: a.items.map { PreviousItem(it.poiId, it.name, it.lat, it.lon, transport = it.transport) }
+            PreviousAnswer(_state.value.lastQuery, a.summary, trip = a.plan != null, items = stops.take(8))
+        }
         finishSearch(if (filters == null) "reformulated" else null)
         searchJob?.cancel()
         suggestJob?.cancel()
@@ -296,6 +306,7 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
                 walkActive = walk.state == WalkDetector.State.WALKING,
                 profileSummary = g.profile.summary(nowMs), profileAffinity = g.profile.affinity(), filters = filters,
                 // Сохранённые места — чтобы «поехали к брату» понимал и ИИ (координаты с точностью ~10 м).
+                previous = previous,
                 savedPlaces = g.places.items.value.map { p ->
                     SavedPlaceIn(p.name, p.address, Math.round(p.lat * 1e4) / 1e4, Math.round(p.lon * 1e4) / 1e4)
                 },
@@ -450,13 +461,40 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
     }
 
     /** План: маршрут через все этапы (промежуточные точки и цель). */
-    fun startPlan() {
+    /**
+     * Маршрут по плану ведётся по этапам: до первой точки, на месте — «Дальше» к следующей. Каждый этап — ровно тот
+     * вариант дороги, что выбрал ИИ (автобус, пешком, авто); промежуточные точки не теряются.
+     */
+    fun startPlan() = startPlanLeg(0)
+
+    fun startPlanLeg(index: Int) {
         val plan = _state.value.answer?.plan ?: return
-        val last = plan.legs.lastOrNull() ?: return
-        finishSearch("route_started")
-        val via = plan.legs.dropLast(1).map { LatLng(it.lat, it.lon) }
-        pendingNavigation = true
-        routeTo(Target(last.to, last.name, last.lat, last.lon, openUntil = last.openUntil), plan.legs.first().transport, via)
+        val leg = plan.legs.getOrNull(index) ?: return
+        if (index == 0) finishSearch("route_started")
+        _state.update { it.copy(planLeg = index) }
+        val option = leg.route
+        if (option == null) {
+            // ИИ не приложил дорогу (сбой маршрутов) — строим этап заново и стартуем, как только он готов.
+            pendingNavigation = true
+            routeTo(Target(leg.to, leg.name, leg.lat, leg.lon, openUntil = leg.openUntil), leg.transport)
+            return
+        }
+        val route = RouteResponse(transport = leg.transport, totalDistanceM = option.totalDistanceM,
+            totalDurationS = option.totalDurationS, geometry = option.geometry, maneuvers = option.maneuvers,
+            source = "plan", options = listOf(option))
+        viewModelScope.launch {
+            val precise = g.location.current()
+            NavigationService.start(g.app, route, NavDestination(leg.to, leg.name, null, leg.lat, leg.lon, leg.openUntil),
+                precise, _state.value.simulateNavigation)
+            _state.update { it.copy(sheet = SheetMode.NONE) }
+        }
+    }
+
+    /** Следующая точка плана во время навигации по нему (для кнопки «Дальше»). */
+    fun nextPlanLeg(): kz.smartcity.walk.data.api.PlanLeg? {
+        val s = _state.value
+        val i = s.planLeg ?: return null
+        return s.answer?.plan?.legs?.getOrNull(i + 1)
     }
 
     fun startNavigation() {
@@ -472,7 +510,10 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
         }
     }
 
-    fun stopNavigation() = NavigationService.stop(g.app)
+    fun stopNavigation() {
+        _state.update { it.copy(planLeg = null) }
+        NavigationService.stop(g.app)
+    }
 
     fun closeSheet() {
         val s = _state.value
@@ -572,7 +613,28 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
         val markers = if (s.sheet == SheetMode.ROUTE) markers(s).filter { it.kind == "dest" || it.id == s.routeTarget?.poiId } else markers(s)
         val route = s.route
         if (s.sheet != SheetMode.ROUTE || route == null) {
-            val planLine = s.answer?.plan?.geometry?.takeIf { s.sheet == SheetMode.PLAN && it.size > 1 }
+            val plan = s.answer?.plan?.takeIf { s.sheet == SheetMode.PLAN }
+            if (plan != null && plan.legs.any { it.route != null }) {
+                val lines = mutableListOf<MapLine>()
+                val stops = mutableListOf<MapStop>()
+                plan.legs.forEach { leg ->
+                    val o = leg.route ?: return@forEach
+                    if (o.legs.isEmpty()) lines += MapLine(o.geometry.toLatLng(), primary)
+                    else o.legs.forEach { l ->
+                        if (l.kind == "walk") lines += MapLine(l.geometry.toLatLng(), walk, width = 5.dp, dashed = true)
+                        else {
+                            val color = parseColor(l.color) ?: primary
+                            lines += MapLine(l.geometry.toLatLng(), color, width = 7.dp)
+                            l.stops.forEachIndexed { i, st ->
+                                val edge = i == 0 || i == l.stops.lastIndex
+                                stops += MapStop(st.lat, st.lon, color, major = edge, name = if (edge) st.name else null)
+                            }
+                        }
+                    }
+                }
+                return MapLayers(markers = markers, lines = lines, stops = stops)
+            }
+            val planLine = plan?.geometry?.takeIf { it.size > 1 }
             return MapLayers(markers = markers, lines = listOfNotNull(planLine?.let { MapLine(it.toLatLng(), primary) }))
         }
         if (route.options.isEmpty()) return MapLayers(markers, listOf(MapLine(route.geometry.toLatLng(), primary)))

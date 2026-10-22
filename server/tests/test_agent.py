@@ -14,7 +14,7 @@ class ScriptedAgentLLM:
         self.fail = fail
         self.payload = None
 
-    async def agent_loop(self, payload, execute, on_turn=None, on_web=None):
+    async def agent_loop(self, payload, execute, on_turn=None, on_web=None, validate=None):
         self.payload = payload
         if self.fail:
             return None
@@ -26,7 +26,7 @@ class ScriptedAgentLLM:
         return {"items": [{"place_id": first, "why": "Ближе всех и открыто", "visit_min": 40, "action": "Идите пешком",
                            "transport": "walking", "route_option_id": route["options"][0]["id"]}],
                 "understood": ["Кофейня", "Пешком"], "summary": "Нашёл кофейню рядом.", "show_route": True,
-                "idea": None}
+                "idea": None, "trip": False, "requested_steps": ["кофейня"], "skipped": [], "remember": None}
 
     # остальные методы для запасного конвейера
     async def answer(self, payload):
@@ -59,22 +59,34 @@ async def test_agent_answer_with_route():
 class TripAgentLLM(ScriptedAgentLLM):
     """Многошаговый запрос: два места, проверка порядка, факты из интернета и предложение запомнить адрес."""
 
-    async def agent_loop(self, payload, execute, on_turn=None, on_web=None):
+    async def agent_loop(self, payload, execute, on_turn=None, on_web=None, validate=None):
         self.payload = payload
         if on_web:
             await on_web("web_search", {"query": "кофейня меню цены Астана"})
         coffee = (await execute("search_places", {"query": "кофейня", "radius_m": 3000}))["places"][0]["id"]
         park = (await execute("search_places", {"query": "парк", "radius_m": 3000}))["places"][0]["id"]
-        trip = await execute("check_trip", {"place_ids": [coffee, park], "visit_min": [30, 60], "transport": "walking"})
+        trip = await execute("check_trip", {"place_ids": [coffee, park], "visit_min": [30, 60],
+                                            "transports": ["walking", "driving"]})
         assert len(trip["stops"]) == 2 and trip["stops"][0]["arrive_at"] and trip["total_min"] >= 90
+        assert trip["stops"][1]["transport"] == "driving" and trip["stops"][1]["route_options"]
+        self.chosen = trip["stops"][1]["route_options"][-1]["id"]  # не самый быстрый — выбор агента
         addr = (await execute("find_address", {"query": "Хан Шатыр"}))["results"][0]["place_id"]
-        item = {"why": "—", "action": "—", "transport": "walking", "route_option_id": None}
-        return {"items": [{**item, "place_id": coffee, "visit_min": 30, "purpose": "Кофе",
-                           "evidence": [{"fact": "Капучино — 1200 ₸", "source": "https://example.kz/menu"},
-                                        {"fact": "Без ссылки", "source": "javascript:alert(1)"}]},
-                          {**item, "place_id": park, "visit_min": 60, "purpose": "Прогулка", "evidence": []}],
-                "understood": ["Кофе", "Парк"], "summary": "Сначала кофе, потом парк.", "show_route": False,
-                "idea": None, "trip": True, "remember": {"name": "Брат", "place_id": addr, "icon": "family"}}
+        item = {"why": "—", "action": "—", "route_option_id": None}
+        result = {"items": [{**item, "transport": "walking", "place_id": coffee, "visit_min": 30, "purpose": "Кофе",
+                             "evidence": [{"fact": "Капучино — 1200 ₸", "source": "https://example.kz/menu"},
+                                          {"fact": "Без ссылки", "source": "javascript:alert(1)"}]},
+                            {**item, "transport": "driving", "route_option_id": self.chosen, "place_id": park,
+                             "visit_min": 60, "purpose": "Прогулка", "evidence": []}],
+                  "understood": ["Кофе", "Парк"], "summary": "Сначала кофе, потом парк.", "show_route": False,
+                  "idea": None, "trip": True, "remember": {"name": "Брат", "place_id": addr, "icon": "family"},
+                  "requested_steps": ["кофе", "парк", "аптека"], "skipped": []}
+        # Шаг «аптека» потерян — проверка возвращает ответ на доработку; агент объясняет пропуск.
+        problem = validate(result)
+        assert problem and "3 шагов" in problem
+        result["skipped"] = [{"step": "аптека", "reason": "рядом нет открытой"}]
+        assert validate(result) is None
+        assert validate({**result, "items": [{**result["items"][0], "place_id": "выдуманный"}]})
+        return result
 
 
 async def test_agent_trip_plan_evidence_and_remember():
@@ -89,6 +101,42 @@ async def test_agent_trip_plan_evidence_and_remember():
     ev = answer["items"][0]["evidence"]
     assert ev[0] == {"fact": "Капучино — 1200 ₸", "source": "https://example.kz/menu"} and ev[1]["source"] is None
     assert answer["remember"]["name"] == "Брат" and answer["remember"]["icon"] == "family"
+    # На втором этапе — выбранный агентом вариант дороги (авто), целиком: линия и подпись.
+    assert legs[1]["transport"] == "driving" and legs[1]["route"]["id"] == str(svc.llm.chosen)
+    assert legs[1]["route"]["geometry"] and legs[1]["route_label"]
+    assert answer["skipped"] == ["аптека — рядом нет открытой"]
+
+
+class FollowUpAgentLLM(ScriptedAgentLLM):
+    """Уточнение «добавь ещё парк»: места прошлого ответа доступны по своим id."""
+
+    async def agent_loop(self, payload, execute, on_turn=None, on_web=None, validate=None):
+        self.payload = payload
+        prev = payload["previous"]["items"][0]["place_id"]
+        park = (await execute("search_places", {"query": "парк", "radius_m": 3000}))["places"][0]["id"]
+        trip = await execute("check_trip", {"place_ids": [prev, park], "visit_min": [20, 40], "transports": ["walking"]})
+        assert "error" not in trip
+        item = {"why": "—", "action": "—", "transport": "walking", "route_option_id": None, "evidence": []}
+        return {"items": [{**item, "place_id": prev, "visit_min": 20, "purpose": "Кофе"},
+                          {**item, "place_id": park, "visit_min": 40, "purpose": "Парк"}],
+                "understood": ["Добавить парк"], "summary": "Добавил парк после кофе.", "show_route": False, "idea": None,
+                "trip": True, "remember": None, "requested_steps": ["кофе", "парк"], "skipped": []}
+
+
+async def test_agent_follow_up_keeps_previous_stops():
+    svc = make_services()
+    svc.llm = FollowUpAgentLLM()
+    from app.models import PreviousAnswer, PreviousItem
+    prev = PreviousAnswer(query="кофе рядом", trip=False,
+                          items=[PreviousItem(poi_id="prev-cafe-1", name="Кофейня у дома", lat=MSW[0] + 0.003, lon=MSW[1])])
+    req = SearchRequest(query="добавь ещё парк", lat=MSW[0], lon=MSW[1], local_time=at(14), previous=prev)
+    events = []
+    async for chunk in stream_search(req, svc):
+        lines = chunk.strip().split("\n")
+        events.append((lines[0].removeprefix("event: "), json.loads(lines[1].removeprefix("data: "))))
+    answer = next(d for n, d in events if n == "answer")
+    assert answer["mode"] == "plan" and [leg["name"] for leg in answer["plan"]["legs"]][0] == "Кофейня у дома"
+    assert svc.llm.payload["previous"]["query"] == "кофе рядом"
 
 
 async def test_agent_failure_falls_back_to_pipeline():

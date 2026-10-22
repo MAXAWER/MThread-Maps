@@ -353,6 +353,20 @@ fun PlanSheet(s: MapUiState, vm: MapViewModel, onOpen2gis: (Target) -> Unit) {
                                 style = MaterialTheme.typography.bodySmall)
                             OpenStateText(leg.openState, leg.openUntil)
                         }
+                        // Дорога до точки, которую выбрал ИИ: автобусы по номерам, отправление или интервал.
+                        leg.route?.let { o ->
+                            if (o.legs.any { it.kind != "walk" }) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+                                o.legs.forEachIndexed { k, l ->
+                                    if (k > 0) Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    LegChip(l)
+                                }
+                            }
+                            departureText(o)?.let { Text(it, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold) }
+                        }
+                        leg.routeLabel?.takeIf { leg.route?.legs.isNullOrEmpty() }?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                         leg.visitMin?.let {
                             Text("На месте ~$it мин", style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -369,6 +383,8 @@ fun PlanSheet(s: MapUiState, vm: MapViewModel, onOpen2gis: (Target) -> Unit) {
         }
         plan.explanation?.let { e -> item { Text(e, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 20.dp)) } }
         items(plan.notes) { NoteText("• $it") }
+        // Шаги, которые выполнить не удалось, — с причиной, чтобы ничего не терялось молча.
+        s.answer?.skipped?.let { sk -> items(sk) { NoteText("Пропущено: $it") } }
         item {
             Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 BubbleButton(onClick = vm::startPlan, modifier = Modifier.weight(1f)) {

@@ -116,6 +116,9 @@ data class PlanLeg(
     val leaveAt: String? = null,
     val visitMin: Int? = null,
     val distanceM: Int? = null,
+    /** Выбранный ИИ вариант дороги до этой точки (автобус, остановки, линия) и подпись к нему. */
+    val route: RouteOption? = null,
+    val routeLabel: String? = null,
 )
 
 @Serializable
@@ -144,7 +147,18 @@ data class Answer(
     val route: RouteResponse? = null,
     val routeOptionId: String? = null,
     val remember: RememberOffer? = null,
+    /** Шаги запроса, которые выполнить нельзя, с причиной. */
+    val skipped: List<String> = emptyList(),
 )
+
+/** Прошлый ответ на экране — новый запрос может его уточнять («добавь аптеку»). */
+@Serializable
+data class PreviousItem(val poiId: String, val name: String, val lat: Double, val lon: Double, val purpose: String? = null,
+                        val transport: String? = null)
+
+@Serializable
+data class PreviousAnswer(val query: String, val summary: String? = null, val trip: Boolean = false,
+                          val items: List<PreviousItem> = emptyList())
 
 @Serializable
 data class ProgressEvent(val text: String = "")
@@ -168,6 +182,7 @@ data class SearchRequest(
     val lang: String? = null,
     val filters: JevFilters? = null,
     val savedPlaces: List<SavedPlaceIn> = emptyList(),
+    val previous: PreviousAnswer? = null,
 )
 
 @Serializable
