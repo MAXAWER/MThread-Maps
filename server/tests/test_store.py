@@ -53,3 +53,61 @@ async def test_concurrent_identical_requests_share_one_call():
 
     res = await asyncio.gather(*[store.fetch("matrix", ["same"], 60, slow, retry_on=(DgisError,)) for _ in range(5)])
     assert all(r == {"v": 1} for r in res) and len(calls) == 1 and store.stats["matrix:joined"] == 4
+
+
+class FakeShared:
+    """Общая база (как Firestore): видна всем экземплярам сервера."""
+
+    def __init__(self):
+        self.docs = {}
+
+    async def get(self, key):
+        return self.docs.get(key)
+
+    async def set(self, key, at, value):
+        self.docs[key] = (at, value)
+
+
+async def test_new_instance_reuses_shared_copy_after_cold_start():
+    shared, calls = FakeShared(), []
+
+    async def load():
+        calls.append(1)
+        return {"items": ["Cult"]}
+
+    first = ResponseStore(backend=shared)
+    await first.fetch("places", ["кофе"], 3600, load, retry_on=(DgisError,))
+    await asyncio.sleep(0)  # запись в общую базу идёт в фоне
+    second = ResponseStore(backend=shared)  # другой экземпляр / холодный старт: память пуста
+    assert await second.fetch("places", ["кофе"], 3600, load, retry_on=(DgisError,)) == {"items": ["Cult"]}
+    assert len(calls) == 1 and second.stats["places:shared"] == 1
+
+
+def test_firestore_backend_packs_large_answers(monkeypatch):
+    from app.store import FirestoreBackend
+
+    stored = {}
+
+    class Doc:
+        def __init__(self, key):
+            self.key = key
+
+        async def set(self, data):
+            stored[self.key] = data
+
+        async def get(self):
+            data = stored.get(self.key)
+            return type("Snap", (), {"exists": data is not None, "to_dict": lambda self: data})()
+
+    class Col:
+        def document(self, key):
+            return Doc(key)
+
+    b = FirestoreBackend.__new__(FirestoreBackend)
+    b._client = type("C", (), {"collection": lambda self, name: Col()})()
+    b._name = "dgis_cache"
+    value = {"result": {"items": [{"name": "Кофейня " + str(i), "address": "Кабанбай батыра, 62"} for i in range(500)]}}
+    asyncio.run(b.set("k", 123.0, value))
+    assert len(stored["k"]["data"]) < len(str(value))  # сжато
+    at, got = asyncio.run(b.get("k"))
+    assert at == 123.0 and got == value

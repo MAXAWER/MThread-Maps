@@ -9,3 +9,5 @@ tzdata==2026.5
 # Cloud Functions for Firebase: точка входа server/main.py
 firebase-functions==0.6.0
 a2wsgi==1.10.10
+# Общий кэш ответов 2ГИС (server/app/store.py), включается в облаке автоматически
+google-cloud-firestore==2.21.0

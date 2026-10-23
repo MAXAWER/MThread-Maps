@@ -21,5 +21,10 @@
         "pytest.ini"
       ]
     }
-  ]
+  ],
+  "firestore": {
+    "database": "(default)",
+    "location": "europe-west1",
+    "rules": "firestore.rules"
+  }
 }

@@ -1,4 +1,4 @@
-"""Кэш ответов 2ГИС: «загрузилось один раз — используем дальше».
+"""Кэш ответов 2ГИС: «загрузилось один раз — используем дальше» (общий для всех экземпляров функции).
 
 Два уровня: память процесса и (если включено DGIS_CACHE=firestore) Firestore — общий для всех экземпляров
 функции и переживает холодные старты. Хранится сырой ответ 2ГИС, разбор — каждый раз заново.
@@ -27,7 +27,16 @@ class FirestoreBackend:
     def __init__(self, collection: str = "dgis_cache"):
         from google.cloud import firestore  # импорт только если кэш в Firestore включён
 
-        self._col = firestore.AsyncClient().collection(collection)
+        self._firestore = firestore
+        self._name = collection
+        self._client = None
+
+    @property
+    def _col(self):
+        # Клиент создаётся при первом обращении — внутри цикла событий, где работает сервер (gRPC привязан к циклу).
+        if self._client is None:
+            self._client = self._firestore.AsyncClient()
+        return self._client.collection(self._name)
 
     async def get(self, key: str) -> tuple[float, Any] | None:
         snap = await self._col.document(key).get()
@@ -81,6 +90,9 @@ class ResponseStore:
                 doc = None
             if doc is not None:
                 if now - doc[0] < ttl_s:
+                    if not self.stats.get("shared_total"):
+                        log.warning("2gis cache: first answer served from firestore (%s)", kind)
+                    self.stats["shared_total"] += 1
                     self.stats[f"{kind}:shared"] += 1
                     self._remember(key, *doc)
                     return doc[1]
@@ -114,16 +126,22 @@ class ResponseStore:
     async def _persist(self, key: str, at: float, value: Any) -> None:
         try:
             await self._backend.set(key, at, value)
+            if not self.stats.get("saved_total"):
+                log.warning("2gis cache: first copy saved to firestore (%s)", key.split("-")[0])
+            self.stats["saved_total"] += 1
         except Exception as exc:
             log.warning("cache backend set failed: %s", type(exc).__name__)
 
 
 def build_store() -> ResponseStore:
+    """В облаке (Cloud Run выставляет K_SERVICE) кэш общий — Firestore; локально и в тестах — только память.
+    DGIS_CACHE=memory|firestore переопределяет выбор."""
     backend = None
-    if os.getenv("DGIS_CACHE", "").lower() == "firestore":
+    mode = os.getenv("DGIS_CACHE", "").lower() or ("firestore" if os.getenv("K_SERVICE") else "memory")
+    if mode == "firestore":
         try:
             backend = FirestoreBackend()
-            log.info("2gis cache: memory + firestore")
+            log.warning("2gis cache: memory + firestore (shared)")
         except Exception as exc:
             log.warning("firestore cache unavailable (%s) — memory only", type(exc).__name__)
     return ResponseStore(backend=backend)
