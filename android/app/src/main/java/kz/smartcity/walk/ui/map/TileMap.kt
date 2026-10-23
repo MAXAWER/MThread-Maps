@@ -33,6 +33,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.geometry.Size
@@ -597,7 +598,8 @@ fun PlacePreviewMap(at: LatLng, pin: Color, modifier: Modifier = Modifier, zoom:
     val camera = remember(at.lat, at.lon) { MapCamera(at, zoom) }
     camera.tilePx = TILE_DP * density.density
     val scope = rememberCoroutineScope()
-    Canvas(modifier.onSizeChanged { camera.size = it }) {
+    // clipToBounds: тайлы вокруг места не должны рисоваться поверх текста карточки.
+    Canvas(modifier.clipToBounds().onSizeChanged { camera.size = it }) {
         TileStore.version.intValue // перерисовать, когда догрузятся тайлы
         drawRect(Color(0xFFEDEAE2))
         drawTiles(camera, scope)

@@ -243,7 +243,8 @@ private fun DeckScreen(vm: ForYouViewModel, modifier: Modifier = Modifier, botto
                         key(item.card.poiId) {
                             DeckCard(
                                 item = item, depth = depth, motion = if (depth == 0) motion else null, progress = progress,
-                                widthPx = widthPx, modifier = Modifier.align(Alignment.TopCenter),
+                                // На широком экране (Fold, планшет) карточка не растягивается во всю ширину.
+                                widthPx = widthPx, modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 520.dp),
                                 onSwiped = { like -> progress.floatValue = 0f; vm.swipe(item, like) },
                                 onDetails = { vm.openDetails(item) },
                             )

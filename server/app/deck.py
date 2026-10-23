@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import math
 from datetime import datetime, timedelta
@@ -154,6 +155,13 @@ async def build_deck(req: DeckRequest, svc: Services) -> dict:
             log.warning("deck places failed: %s", type(res).__name__)
             continue
         for p, _spec in res:
+            # Категория — по рубрикам самого места, а не по запросу: «Башмачок, магазин обуви» по запросу «театр»
+            # не должен стать театром. Рубрики не подходят ни под одну категорию — места в подборке нет.
+            own = catalog.match_rubrics(p.rubrics) if p.rubrics else p.category
+            if own is None:
+                continue
+            if own != p.category:
+                p = dataclasses.replace(p, category=own)
             if p.id not in seen and p.category in catalog.categories:
                 seen.add(p.id)
                 places.append(p)

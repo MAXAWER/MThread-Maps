@@ -30,3 +30,20 @@ async def test_recent_search_adds_marked_places():
 def test_search_seeds_skip_routes_and_addresses():
     assert search_seeds(["Как добраться на автобусе", "Кенесары 40", "горячий шоколад", "кофе", "суши"]) == \
         ["горячий шоколад", "кофе"]
+
+
+async def test_shop_found_by_theatre_query_is_not_a_theatre(monkeypatch):
+    from app.dgis import Place
+    svc = make_services()
+    real = svc.places.places
+
+    async def places(**kw):
+        out = await real(**kw)
+        if "театр" in kw["q"].lower():
+            out = [Place(id="shoe-1", name="Башмачок, магазин обуви", lat=MSW[0] + 0.002, lon=MSW[1], rubrics=["Обувь"],
+                         category="theatre", rating=4.9, reviews=90)] + out
+        return out
+
+    monkeypatch.setattr(svc.places, "places", places)
+    deck = await build_deck(DeckRequest(lat=MSW[0], lon=MSW[1], local_time=at(15), categories=["theatre", "coffee"]), svc)
+    assert all(c["poi_id"] != "shoe-1" for c in deck["cards"])
