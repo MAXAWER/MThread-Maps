@@ -154,9 +154,12 @@ fun ResultsSheet(s: MapUiState, vm: MapViewModel) {
             answer != null -> {
                 answer.summary?.let { sum -> item { SummaryCard(sum) } }
                 itemsIndexed(answer.items, key = { _, it -> it.poiId }) { i, item ->
+                    val context = androidx.compose.ui.platform.LocalContext.current
                     Box(Modifier.padding(horizontal = 16.dp)) {
                         RecommendationCard(i + 1, item, answer.dataSource, onClick = { vm.openItem(item) },
-                            onRoute = { vm.routeTo(Target(item.poiId, item.name, item.lat, item.lon, item.category, item.openUntil), item.transport) })
+                            onRoute = { vm.routeTo(Target(item.poiId, item.name, item.lat, item.lon, item.category, item.openUntil), item.transport) },
+                            onPartner = { vm.openPartner(context, it, item.poiId) },
+                            onPromo = { vm.clickout("sponsored", item.name.substringBefore(","), item.poiId) })
                     }
                 }
                 answer.idea?.let { idea -> item { IdeaCard(idea) } }
@@ -228,7 +231,8 @@ private fun EmptyAnswer(note: String?, relaxed: List<String>) {
 /** Карточка рекомендации: всё, что требует раздел 11. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun RecommendationCard(n: Int, item: AnswerItem, dataSource: String, onClick: () -> Unit, onRoute: () -> Unit) {
+fun RecommendationCard(n: Int, item: AnswerItem, dataSource: String, onClick: () -> Unit, onRoute: () -> Unit,
+                       onPartner: (kz.smartcity.walk.data.api.PartnerLink) -> Unit = {}, onPromo: () -> Unit = {}) {
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Рекомендация $n: ${item.name}" },
@@ -262,6 +266,9 @@ fun RecommendationCard(n: Int, item: AnswerItem, dataSource: String, onClick: ()
             item.why?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
             // Проверено в интернете: позиции меню с ценами и прочие факты — с источником.
             if (item.evidence.isNotEmpty()) EvidenceBlock(item.evidence)
+            // Монетизация: заказать там, где ИИ нашёл меню или билеты; предложение места-партнёра — с пометкой.
+            PartnerButtons(item.partnerLinks, onPartner)
+            item.sponsored?.let { SponsoredOffer(it.copy(label = "Партнёр · " + it.label), onUse = onPromo) }
             item.visitMin?.let {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Schedule, contentDescription = null, modifier = Modifier.size(16.dp),
@@ -460,6 +467,12 @@ fun RouteSheet(s: MapUiState, vm: MapViewModel, onOpen2gis: (Target) -> Unit) {
     val r = s.route
     SheetList {
         item { SheetHeader(target.name, onClose = vm::closeSheet, subtitle = "Маршрут · ${transportLabel(s.routeTransport)}") }
+        // Такси: цены партнёров и заказ в их приложении сразу с точками маршрута.
+        if (s.routeTransport == "taxi") item {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            androidx.compose.runtime.LaunchedEffect(target.poiId) { vm.loadTaxi() }
+            TaxiPanel(s.taxi, s.taxiLoading, onOrder = { p, price -> haptics?.tap(); vm.orderTaxi(context, p, price) })
+        }
         item {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 16.dp)) {
                 items(TRANSPORTS) { t ->

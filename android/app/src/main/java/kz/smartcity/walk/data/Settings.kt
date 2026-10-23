@@ -72,6 +72,11 @@ class Settings(context: Context) {
         get() = prefs.getStringSet("interests", emptySet())?.toSet() ?: emptySet()
         set(v) = prefs.edit { putStringSet("interests", v) }
 
+    /** Человек нажал «Хочу Плюс» — покажем, когда подписка появится. */
+    var plusInterested: Boolean
+        get() = prefs.getBoolean("plus_interested", false)
+        set(v) = prefs.edit { putBoolean("plus_interested", v) }
+
     var lastDeckRefreshMs: Long
         get() = prefs.getLong("deck_refresh_ms", 0)
         set(v) = prefs.edit { putLong("deck_refresh_ms", v) }

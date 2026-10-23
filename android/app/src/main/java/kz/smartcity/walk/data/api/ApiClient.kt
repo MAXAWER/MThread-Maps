@@ -153,6 +153,10 @@ class ApiClient(private val baseUrl: () -> String, private val installId: () -> 
 
     suspend fun deck(req: DeckRequest): DeckResponse = post("/v1/deck", req, DeckRequest.serializer(), DeckResponse.serializer())
 
+    suspend fun taxi(req: TaxiRequest): TaxiResponse = post("/v1/taxi/estimate", req, TaxiRequest.serializer(), TaxiResponse.serializer())
+
+    suspend fun clickout(req: ClickoutIn): OkResponse = post("/v1/clickout", req, ClickoutIn.serializer(), OkResponse.serializer())
+
     suspend fun profileUpdate(req: ProfileUpdateRequest): ProfileOpsResponse =
         post("/v1/profile/update", req, ProfileUpdateRequest.serializer(), ProfileOpsResponse.serializer())
 

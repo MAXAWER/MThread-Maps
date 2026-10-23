@@ -14,6 +14,7 @@ from .catalog import WALK_OUTDOOR, Catalog, Category
 from .dgis import DgisError, Place
 from .geo import search_radius_m
 from .models import DeckCard, DeckFilters, DeckRequest
+from .partners import promotion_for
 from .photos import photos_for
 from .prompts import DECK_SLOTS
 from .ranking import quality
@@ -173,7 +174,9 @@ async def build_deck(req: DeckRequest, svc: Services) -> dict:
         if p.id in seed_of and chip is None:
             chip = f"Как в вашем поиске «{seed_of[p.id]}»"
         q = quality(p.rating, p.reviews)
-        pre = 0.2 * k + 0.2 * math.exp(-(eta or DECK_TRAVEL_MIN) / 10.0) + 0.15 * q + (0.1 if p.id in seed_of else 0.0)
+        promo = promotion_for(p.id, p.name)
+        pre = 0.2 * k + 0.2 * math.exp(-(eta or DECK_TRAVEL_MIN) / 10.0) + 0.15 * q + (0.1 if p.id in seed_of else 0.0) \
+            + (promo["boost"] if promo else 0.0)
         scored.append((pre, p, cat, eta, info, arrival, k, chip, q))
     scored.sort(key=lambda x: x[0], reverse=True)
     # Один филиал сети на колоду: «Tary Astana» дважды — лишнее.
@@ -198,6 +201,7 @@ async def build_deck(req: DeckRequest, svc: Services) -> dict:
             open_state=state_info.state, open_until=open_until_label(state_info), rating=p.rating, reviews=p.reviews,
             q=round(q, 3), k=k, indoor=cat.indoor, context_chip=chip, address=p.address,
             photo_url=photo, photo_source=photo_src, avg_check=p.avg_check, kids=cat.kids, from_search=seed_of.get(p.id),
+            sponsored=promotion_for(p.id, p.name),
         ))
     texts = None
     if cards and svc.llm is not None:

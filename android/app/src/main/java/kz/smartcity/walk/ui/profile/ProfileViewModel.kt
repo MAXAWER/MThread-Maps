@@ -62,6 +62,17 @@ class ProfileViewModel(private val g: AppGraph) : ViewModel() {
 
     suspend fun here(): Pair<Double, Double>? = g.location.current()?.let { it.lat to it.lon }
 
+    /** «Хочу Плюс»: до подключения Google Play Billing записываем спрос (переход kind=plus) и запоминаем интерес. */
+    val plusInterested = MutableStateFlow(g.settings.plusInterested)
+
+    fun wantPlus() {
+        g.settings.plusInterested = true
+        plusInterested.value = true
+        viewModelScope.launch {
+            try { g.api.clickout(kz.smartcity.walk.data.api.ClickoutIn("plus", "subscription")) } catch (_: ApiException) { }
+        }
+    }
+
     private fun snapshot() = ProfileUi(
         transport = g.settings.defaultTransport,
         triggers = Settings.TRIGGERS.associateWith { g.settings.triggerEnabled(it) },

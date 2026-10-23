@@ -108,6 +108,8 @@ internal fun CardCover(item: DeckItem, modifier: Modifier = Modifier, height: Dp
             Text("фото: $it", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.9f),
                 modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp))
         }
+        // Реклама в подборке всегда помечена (закон РК «О рекламе»).
+        c.sponsored?.let { kz.smartcity.walk.ui.map.AdTag(it.label, Modifier.align(Alignment.TopStart).padding(10.dp)) }
     }
 }
 
@@ -308,6 +310,7 @@ private fun LikedCard(item: DeckItem, picked: Boolean, onPick: () -> Unit, onRou
             }
             RatingText(c.rating, c.reviews)
             c.why?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis) }
+            c.sponsored?.takeIf { it.offer != null || it.promoCode != null }?.let { kz.smartcity.walk.ui.map.SponsoredOffer(it) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 FilledTonalButton(onClick = onRoute) {
                     Icon(Icons.Filled.Directions, null, Modifier.size(18.dp)); Text(" Маршрут")

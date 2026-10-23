@@ -136,6 +136,18 @@ private fun ProfileMain(vm: ProfileViewModel, bottomSpace: Dp, onPortrait: () ->
                 }
             }
         }
+        Section(0, "Прогулка Плюс") {
+            val wanted by vm.plusInterested.collectAsStateWithLifecycle()
+            listOf(
+                "Карта всего города офлайн — без интернета и роуминга",
+                "Маршруты ИИ по многим точкам без ограничений",
+                "Без рекламы в подборке «Для вас»",
+                "Приоритетные ответы ИИ и ранний доступ к новому",
+            ).forEach { Text("• $it", style = MaterialTheme.typography.bodyMedium) }
+            if (wanted) Text("Спасибо! Сообщим, как только подписка появится в Google Play.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary)
+            else androidx.compose.material3.Button(onClick = vm::wantPlus) { Text("Хочу Плюс") }
+        }
         Section(1, "Быстрые маршруты") {
             QuickPlacesList(quick, onEdit = { editing = true to it }, onDelete = { vm.deleteQuick(it) })
         }

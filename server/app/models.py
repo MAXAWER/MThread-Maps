@@ -172,6 +172,8 @@ class AnswerItem(BaseModel):
     unconfirmed: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
+    partner_links: list[dict] = Field(default_factory=list)  # доставка, билеты, бронь — на страницы, найденные ИИ
+    sponsored: dict | None = None  # место-партнёр: предложение и промокод (с пометкой), на выбор ИИ не влияет
 
 
 class PlanLeg(BaseModel):
@@ -348,6 +350,7 @@ class DeckCard(BaseModel):
     avg_check: int | None = None      # средний чек, ₸
     kids: bool = False
     from_search: str | None = None    # карточка подобрана по недавнему запросу
+    sponsored: dict | None = None     # реклама: {label: "Реклама", offer, promo_code}
 
 
 class ProfileEvent(BaseModel):
@@ -390,3 +393,16 @@ class NotifyRequest(GeoRequest):
     @classmethod
     def _tz(cls, v: datetime) -> datetime:
         return _aware(v)
+
+class TaxiRequest(BaseModel):
+    origin: GeoRequest
+    to: GeoRequest
+    to_name: str | None = Field(default=None, max_length=200)
+
+
+class ClickoutIn(BaseModel):
+    """Переход к партнёру (такси, доставка, билеты) или клик по рекламе — для расчётов с партнёрами."""
+    kind: Literal["taxi", "delivery", "tickets", "booking", "sponsored", "plus"]
+    partner: str = Field(max_length=60)
+    poi_id: str | None = Field(default=None, max_length=120)
+    value: int | None = None

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
+import os
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -18,7 +19,9 @@ from .config import Settings
 from .deck import build_deck
 from .dgis import DgisError, label_route_options
 from .geo import round_coord
-from .models import ASTANA_TZ, DeckRequest, NotifyRequest, ProfileUpdateRequest, RouteOut, RouteRequest, SearchRequest
+from .models import (ASTANA_TZ, ClickoutIn, DeckRequest, NotifyRequest, ProfileUpdateRequest, RouteOut, RouteRequest,
+                     SearchRequest, TaxiRequest)
+from .partners import STATS, taxi_partners, yandex_prices
 from .notify import notify_candidates
 from .profile import update_profile
 from .schedule import open_info
@@ -222,6 +225,36 @@ async def route(req: RouteRequest, _: str = Depends(install_id), svc: Services =
                     total_duration_s=data["total_duration_s"], geometry=data["geometry"],
                     maneuvers=data["maneuvers"], source=data.get("source", "routing"),
                     note=note or data.get("note"), options=label_route_options(data))
+
+
+@app.post("/v1/taxi/estimate")
+async def taxi_estimate(req: TaxiRequest, _: str = Depends(install_id), svc: Services = Depends(get_svc)):
+    """Такси: маршрут на авто, цены по тарифам и ссылки, открывающие приложения партнёров с точками маршрута."""
+    a, b = (req.origin.lat, req.origin.lon), (req.to.lat, req.to.lon)
+    try:
+        data = await svc.places.route([a, b], "taxi")
+    except DgisError:
+        data = _fallback_route([a, b], "taxi", svc, "Маршрут оценён по прямой.")
+    yandex = await yandex_prices(svc.http, a, b) if svc.http else None
+    partners = taxi_partners(a, b, data["total_distance_m"], data["total_duration_s"], yandex)
+    return {"distance_m": data["total_distance_m"], "duration_s": data["total_duration_s"], "geometry": data["geometry"],
+            "partners": partners, "priced_by": "yandex" if yandex else "estimate",
+            "note": None if yandex else "Цены — оценка по расстоянию и времени; точную покажет приложение такси."}
+
+
+@app.post("/v1/clickout")
+async def clickout(req: ClickoutIn, _: str = Depends(install_id)):
+    STATS.hit(req.kind, req.partner, req.poi_id, req.value)
+    return {"ok": True}
+
+
+@app.get("/v1/admin/stats")
+async def admin_stats(authorization: str | None = Header(default=None)):
+    """Переходы к партнёрам и клики по рекламе с момента запуска экземпляра (полные данные — в журнале)."""
+    token = os.getenv("ADMIN_TOKEN")
+    if not token or authorization != f"Bearer {token}":
+        raise ApiError(403, "forbidden", "Нужен токен администратора.")
+    return {"counts": dict(STATS.counts)}
 
 
 @app.post("/v1/deck")

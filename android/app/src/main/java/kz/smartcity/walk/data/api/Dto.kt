@@ -89,7 +89,60 @@ data class AnswerItem(
     val notes: List<String> = emptyList(),
     /** Факты из интернета (позиция меню и цена, акция) со ссылкой на источник. */
     val evidence: List<Evidence> = emptyList(),
+    /** Кнопки партнёров (доставка, билеты, бронь) — на страницы, которые нашёл ИИ. */
+    val partnerLinks: List<PartnerLink> = emptyList(),
+    /** Место-партнёр: предложение и промокод (с пометкой); на выбор ИИ не влияет. */
+    val sponsored: Sponsored? = null,
 )
+
+@Serializable
+data class PartnerLink(val kind: String, val partner: String, val label: String, val url: String)
+
+@Serializable
+data class Sponsored(val label: String = "Реклама", val offer: String? = null, val promoCode: String? = null, val boost: Double = 0.0)
+
+/** Такси: цены по тарифам и ссылки, открывающие приложения партнёров с точками маршрута. */
+@Serializable
+data class TaxiRequest(val origin: LatLonDto, val to: LatLonDto, val toName: String? = null)
+
+@Serializable
+data class TaxiPrice(
+    val tariff: String? = null,
+    val label: String? = null,
+    val priceMin: Int = 0,
+    val priceMax: Int = 0,
+    val priceText: String? = null,
+    val waitMin: Int? = null,
+    val source: String = "estimate",
+    val deeplink: String? = null,
+)
+
+@Serializable
+data class TaxiPartner(
+    val id: String,
+    val name: String,
+    val prefill: Boolean = false,
+    val androidPackage: String? = null,
+    val storeUrl: String? = null,
+    val prices: List<TaxiPrice> = emptyList(),
+)
+
+@Serializable
+data class TaxiResponse(
+    val distanceM: Int = 0,
+    val durationS: Int = 0,
+    val geometry: List<List<Double>> = emptyList(),
+    val partners: List<TaxiPartner> = emptyList(),
+    val pricedBy: String = "estimate",
+    val note: String? = null,
+)
+
+/** Переход к партнёру или клик по рекламе — для расчётов с партнёрами. */
+@Serializable
+data class ClickoutIn(val kind: String, val partner: String, val poiId: String? = null, val value: Int? = null)
+
+@Serializable
+data class OkResponse(val ok: Boolean = true)
 
 @Serializable
 data class Evidence(val fact: String, val source: String? = null)
@@ -356,6 +409,8 @@ data class DeckCard(
     val kids: Boolean = false,
     /** Карточка подобрана по недавнему поиску. */
     val fromSearch: String? = null,
+    /** Реклама: помечается «Реклама», может нести предложение и промокод. */
+    val sponsored: Sponsored? = null,
 )
 
 @Serializable

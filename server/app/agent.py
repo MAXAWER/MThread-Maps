@@ -16,6 +16,7 @@ from .dgis import DgisError, Place, label_route_options
 from .geo import haversine_m
 from .jev import TRANSPORT_LABELS
 from .models import Answer, AnswerItem, Chip, Evidence, JevFilters, Plan, PlanLeg, RememberOffer, SearchRequest
+from .partners import partner_links, promotion_for
 from .schedule import open_at, open_info
 from .search import (DETOUR, WEEKDAYS_RU, Evaluated, category_label, open_until_label, to_candidate, to_item,
                      travel_times)
@@ -327,6 +328,9 @@ class SearchAgent:
                            action=_trim(it.get("action"), 260))
             item.evidence = [Evidence(fact=_trim(e.get("fact"), 160) or "", source=_url(e.get("source")))
                              for e in (it.get("evidence") or [])[:6] if e.get("fact")]
+            # Кнопки «Заказать доставку» / «Билеты» — только на реальные страницы, которые нашёл ИИ.
+            item.partner_links = partner_links([e.source for e in item.evidence])
+            item.sponsored = promotion_for(p.id, p.name)
             items.append(item)
             if i == 0 and result.get("show_route") and route and option:
                 d = route["data"]

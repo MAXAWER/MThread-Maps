@@ -98,6 +98,9 @@ data class MapUiState(
     val remember: RememberOffer? = null,
     /** Навигация по плану: номер текущего этапа (точки), иначе null. */
     val planLeg: Int? = null,
+    /** Такси: цены партнёров для текущего маршрута. */
+    val taxi: kz.smartcity.walk.data.api.TaxiResponse? = null,
+    val taxiLoading: Boolean = false,
 )
 
 /** Подсказка запроса: текст и ключ иконки. */
@@ -436,6 +439,7 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
 
     fun routeTo(target: Target, transport: String = _state.value.routeTransport, via: List<LatLng> = emptyList()) {
         routeJob?.cancel()
+        if (_state.value.routeTarget?.poiId != target.poiId) _state.update { it.copy(taxi = null) }
         _state.update { it.copy(sheet = SheetMode.ROUTE, routeTarget = target, routeLoading = true, route = null,
             routeTransport = transport, error = null, selectedOptionId = null) }
         routeJob = viewModelScope.launch {
@@ -507,6 +511,52 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
             NavigationService.start(g.app, route, NavDestination(target.poiId, target.name, target.category, target.lat, target.lon,
                 target.openUntil), precise, s.simulateNavigation)
             _state.update { it.copy(sheet = SheetMode.NONE) }
+        }
+    }
+
+    /** Цены и партнёры такси до текущей цели; повторно не грузит, пока цель та же. */
+    fun loadTaxi() {
+        val target = _state.value.routeTarget ?: return
+        if (_state.value.taxiLoading) return
+        val from = _state.value.myLocation ?: CITY_CENTER
+        _state.update { it.copy(taxiLoading = true) }
+        viewModelScope.launch {
+            val resp = try {
+                g.api.taxi(kz.smartcity.walk.data.api.TaxiRequest(LatLonDto(from.lat, from.lon), LatLonDto(target.lat, target.lon), target.name))
+            } catch (_: ApiException) { null }
+            _state.update { it.copy(taxi = resp?.takeIf { _state.value.routeTarget?.poiId == target.poiId }, taxiLoading = false) }
+        }
+    }
+
+    /**
+     * Заказ такси у партнёра: ссылка открывает его приложение сразу с точками «откуда» и «куда»
+     * (Яндекс Go). Если ссылки с точками нет — открываем приложение и копируем адрес назначения; нет приложения — магазин.
+     */
+    fun orderTaxi(context: Context, partner: kz.smartcity.walk.data.api.TaxiPartner, price: kz.smartcity.walk.data.api.TaxiPrice) {
+        val target = _state.value.routeTarget ?: return
+        clickout("taxi", partner.id, target.poiId, price.priceMax)
+        val view = { url: String -> context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        price.deeplink?.let { runCatching { view(it) }.onSuccess { return } }
+        val launch = partner.androidPackage?.let { context.packageManager.getLaunchIntentForPackage(it) }
+        if (launch != null) {
+            val cm = context.getSystemService(android.content.ClipboardManager::class.java)
+            cm?.setPrimaryClip(android.content.ClipData.newPlainText("Куда", target.name))
+            android.widget.Toast.makeText(context, "Адрес «${target.name}» скопирован — вставьте его в ${partner.name}",
+                android.widget.Toast.LENGTH_LONG).show()
+            context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } else partner.storeUrl?.let { runCatching { view(it) } }
+    }
+
+    /** Кнопка партнёра в карточке (доставка, билеты, бронь): учёт перехода и открытие страницы. */
+    fun openPartner(context: Context, link: kz.smartcity.walk.data.api.PartnerLink, poiId: String?) {
+        clickout(link.kind, link.partner, poiId)
+        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link.url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+    }
+
+    /** Учёт перехода к партнёру или клика по рекламе (на сервере — основа расчётов с партнёрами). */
+    fun clickout(kind: String, partner: String, poiId: String? = null, value: Int? = null) {
+        viewModelScope.launch {
+            try { g.api.clickout(kz.smartcity.walk.data.api.ClickoutIn(kind, partner, poiId, value)) } catch (_: ApiException) { }
         }
     }
 

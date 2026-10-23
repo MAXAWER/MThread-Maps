@@ -461,6 +461,7 @@ private fun DeckCardContent(item: DeckItem, likeHint: Float) {
             c.why?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis) }
             c.address?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            c.sponsored?.takeIf { it.offer != null || it.promoCode != null }?.let { kz.smartcity.walk.ui.map.SponsoredOffer(it) }
         }
     }
 }

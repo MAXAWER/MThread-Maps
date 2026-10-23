@@ -16,6 +16,9 @@
 
     <queries>
         <package android:name="ru.dublgis.dgismobile" />
+        <!-- Партнёры такси: проверить, установлено ли приложение, и открыть его. -->
+        <package android:name="ru.yandex.taxi" />
+        <package android:name="sinet.startup.inDriver" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="dgis" />
