@@ -13,7 +13,8 @@ from datetime import datetime, timedelta
 from .catalog import WALK_OUTDOOR, Catalog, Category
 from .dgis import DgisError, Place
 from .geo import search_radius_m
-from .models import DeckCard, DeckRequest
+from .models import DeckCard, DeckFilters, DeckRequest
+from .photos import photos_for
 from .prompts import DECK_SLOTS
 from .ranking import quality
 from .schedule import open_at, open_info
@@ -71,6 +72,55 @@ def context_fit(cat: Category, weather: dict | None, now: datetime, is_day_off: 
     return 0.7, None
 
 
+# Недавние запросы, по которым имеет смысл искать места (маршруты и адреса — нет).
+ROUTE_WORDS = ("маршрут", "добраться", "доехать", "проложи", "домой", "автобус", "поехали")
+
+
+def search_seeds(queries: list[str]) -> list[str]:
+    """До двух недавних запросов о местах — по ним в колоду добавляются похожие места."""
+    out = []
+    for q in queries:
+        low = q.lower().strip()
+        if len(low) < 3 or len(low) > 60 or any(w in low for w in ROUTE_WORDS) or any(ch.isdigit() for ch in low[-4:]):
+            continue
+        if low not in out:
+            out.append(low)
+        if len(out) == 2:
+            break
+    return out
+
+
+# По слову «парк» 2ГИС находит и жилые комплексы, бизнес-центры, поля — это не места для прогулки.
+NOT_A_WALK = ("жилой комплекс", "жк ", "бизнес-центр", "бизнес центр", "офис", "футбольное поле", "паркинг", "автопарк")
+
+
+def is_junk(cat: Category, p: Place) -> bool:
+    name = p.name.lower() + " "
+    return cat.group == "walks" and any(w in name for w in NOT_A_WALK)
+
+
+def brand(p: Place) -> str:
+    """Название без пояснения после запятой: филиалы одной сети считаем одним местом."""
+    return p.name.split(",")[0].strip().lower()
+
+
+def passes(f: DeckFilters, cat: Category, p: Place, eta: float | None, open_state: str) -> bool:
+    """Фильтры из панели «Для вас»."""
+    if f.open_now and open_state != "open":
+        return False
+    if f.max_eta_min is not None and eta is not None and eta > f.max_eta_min:
+        return False
+    if f.place == "indoor" and not cat.indoor or f.place == "outdoor" and cat.indoor:
+        return False
+    if f.kids and not cat.kids:
+        return False
+    if f.budget != "any" and p.avg_check is not None and p.avg_check > (3000 if f.budget == "cheap" else 7000):
+        return False
+    if f.min_rating is not None and (p.rating is None or p.rating < f.min_rating):
+        return False
+    return True
+
+
 async def build_deck(req: DeckRequest, svc: Services) -> dict:
     catalog = svc.catalog
     now = req.local_time
@@ -89,12 +139,16 @@ async def build_deck(req: DeckRequest, svc: Services) -> dict:
     if not svc.settings.dgis_demo_key:  # с платным ключом — ещё до 3 частых районов
         areas += [(a.lat, a.lon) for a in req.extra_areas]
     specs_by_area = [(lat, lon, QuerySpec(c.q, c.id, 1.0)) for lat, lon in areas for c in categories]
+    # Недавние поиски: «горячий шоколад» → такие места тоже попадут в колоду (с пометкой).
+    seeds = search_seeds(req.recent_queries)
+    specs_by_area += [(req.lat, req.lon, QuerySpec(q, None, 1.0)) for q in seeds]
+    seed_of: dict[str, str] = {}
     results = await asyncio.gather(*[
         fetch_places(svc, [spec], lat, lon, radius) for lat, lon, spec in specs_by_area
     ], return_exceptions=True)
     seen: set[str] = set()
     places: list[Place] = []
-    for res in results:
+    for (_lat, _lon, spec), res in zip(specs_by_area, results):
         if isinstance(res, Exception):
             log.warning("deck places failed: %s", type(res).__name__)
             continue
@@ -102,6 +156,8 @@ async def build_deck(req: DeckRequest, svc: Services) -> dict:
             if p.id not in seen and p.category in catalog.categories:
                 seen.add(p.id)
                 places.append(p)
+                if spec.category is None:
+                    seed_of[p.id] = spec.q
     etas = await travel_times(svc, (req.lat, req.lon), places, req.transport) if places else {}
     scored = []
     for p in places:
@@ -111,20 +167,37 @@ async def build_deck(req: DeckRequest, svc: Services) -> dict:
         arrival = open_at(p.schedule, now, eta or 0)
         if arrival.state == "closed" and open_at(p.schedule, now, 60).state != "open":
             continue
+        if is_junk(cat, p) or not passes(req.filters, cat, p, eta, arrival.state):
+            continue
         k, chip = context_fit(cat, weather, now, is_day_off, after_sunset)
+        if p.id in seed_of and chip is None:
+            chip = f"Как в вашем поиске «{seed_of[p.id]}»"
         q = quality(p.rating, p.reviews)
-        pre = 0.2 * k + 0.2 * math.exp(-(eta or DECK_TRAVEL_MIN) / 10.0) + 0.15 * q
+        pre = 0.2 * k + 0.2 * math.exp(-(eta or DECK_TRAVEL_MIN) / 10.0) + 0.15 * q + (0.1 if p.id in seed_of else 0.0)
         scored.append((pre, p, cat, eta, info, arrival, k, chip, q))
     scored.sort(key=lambda x: x[0], reverse=True)
-    scored = scored[: len(DECK_SLOTS)]
+    # Один филиал сети на колоду: «Tary Astana» дважды — лишнее.
+    brands: set[str] = set()
+    unique = []
+    for row in scored:
+        b = brand(row[1])
+        if b not in brands:
+            brands.add(b)
+            unique.append(row)
+    scored = unique[: len(DECK_SLOTS)]
+    # Фото: картинка сайта заведения или Википедия — параллельно и не дольше 6 с.
+    photos = await photos_for(svc.http, [(p, cat.group) for _pre, p, cat, *_ in scored], center=(req.lat, req.lon),
+                              radius_m=max(1500, min(int(radius), 6000))) if svc.http else {}
     cards: list[DeckCard] = []
     for slot, (_pre, p, cat, eta, info, arrival, k, chip, q) in zip(DECK_SLOTS, scored):
+        photo, photo_src = photos.get(p.id, (None, None))
         state_info = arrival if arrival.state != "closed" else info
         cards.append(DeckCard(
             slot=slot, poi_id=p.id, name=p.name, category=cat.id, category_name=cat.name_ru, group=cat.group,
             lat=p.lat, lon=p.lon, eta_min=None if eta is None else max(1, round(eta)), transport=req.transport,
             open_state=state_info.state, open_until=open_until_label(state_info), rating=p.rating, reviews=p.reviews,
             q=round(q, 3), k=k, indoor=cat.indoor, context_chip=chip, address=p.address,
+            photo_url=photo, photo_source=photo_src, avg_check=p.avg_check, kids=cat.kids, from_search=seed_of.get(p.id),
         ))
     texts = None
     if cards and svc.llm is not None:
@@ -132,6 +205,7 @@ async def build_deck(req: DeckRequest, svc: Services) -> dict:
             "context": {"local_time": now.strftime("%H:%M"), "weekday": now.strftime("%A"), "day_off": is_day_off,
                         "weather": weather_brief(weather)},
             "profile": req.profile_summary[:400],
+            "recent_searches": req.recent_queries[:5],
             "cards": [{"slot": c.slot, "name": c.name, "category": c.category_name, "context": c.context_chip,
                        "open_state": c.open_state, "indoor": c.indoor} for c in cards],
         })

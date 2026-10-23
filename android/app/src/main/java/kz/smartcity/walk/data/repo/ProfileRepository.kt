@@ -62,9 +62,29 @@ class ProfileRepository(private val db: AppDatabase, private val json: Json) {
         dao.upsertCounter(c.copy(alpha = c.alpha + alpha, beta = c.beta + beta, updatedMs = nowMs))
     }
 
-    /** Свайпы и посещения меняют счётчики напрямую, без модели: «хочу» α+1, «не то» β+1, маршрут α+2. */
-    suspend fun onSwipe(category: String, like: Boolean, nowMs: Long) =
+    /**
+     * Свайпы и посещения меняют счётчики напрямую, без модели: «хочу» α+1, «не то» β+1, маршрут α+2.
+     * Черты места (под крышей, цена, расстояние, рейтинг) учатся вдвое мягче — по 0,5.
+     */
+    suspend fun onSwipe(category: String, like: Boolean, nowMs: Long, features: List<String> = emptyList()) {
         if (like) bumpCounter(category, alpha = 1.0, nowMs = nowMs) else bumpCounter(category, beta = 1.0, nowMs = nowMs)
+        features.forEach { if (like) bumpCounter(it, alpha = 0.5, nowMs = nowMs) else bumpCounter(it, beta = 0.5, nowMs = nowMs) }
+    }
+
+    /** Отмена свайпа: возвращаем счётчики как были. */
+    suspend fun undoSwipe(category: String, like: Boolean, nowMs: Long, features: List<String> = emptyList()) {
+        suspend fun back(key: String, w: Double) {
+            val c = dao.counter(key) ?: return
+            dao.upsertCounter(if (like) c.copy(alpha = (c.alpha - w).coerceAtLeast(1.0), updatedMs = nowMs)
+                else c.copy(beta = (c.beta - w).coerceAtLeast(1.0), updatedMs = nowMs))
+        }
+        back(category, 1.0)
+        features.forEach { back(it, 0.5) }
+    }
+
+    /** Интерес к чертам мест (feat:indoor, feat:cheap, …) — для ранжирования колоды. */
+    suspend fun featureAffinity(): Map<String, Double> =
+        dao.counters().filter { it.category.startsWith("feat:") }.associate { it.category to ProfileMath.affinity(it.alpha, it.beta) }
 
     suspend fun onRouteCompleted(category: String?, nowMs: Long) {
         if (category != null) bumpCounter(category, alpha = 2.0, nowMs = nowMs)
@@ -82,17 +102,21 @@ class ProfileRepository(private val db: AppDatabase, private val json: Json) {
     }
 
     suspend fun affinity(): Map<String, Double> =
-        dao.counters().associate { it.category to ProfileMath.affinity(it.alpha, it.beta) }
+        dao.counters().filter { it.category in Categories.all }.associate { it.category to ProfileMath.affinity(it.alpha, it.beta) }
 
-    /** 3 категории сэмплированием Томпсона + 1 случайная, чтобы пробовать новое (раздел 9). */
-    suspend fun deckCategories(rnd: Random = Random.Default): List<String> {
+    /**
+     * 5 категорий сэмплированием Томпсона + 1 случайная, чтобы пробовать новое (раздел 9). Если в фильтрах выбраны
+     * группы («Еда», «Прогулки»), категории берутся только из них.
+     */
+    suspend fun deckCategories(groups: Set<String> = emptySet(), rnd: Random = Random.Default): List<String> {
         val counters = dao.counters().associateBy { it.category }
-        val pool = Categories.all.keys.filter { it !in Categories.notForDeck }
+        val pool = Categories.all.values.filter { it.id !in Categories.notForDeck && (groups.isEmpty() || it.group in groups) }
+            .map { it.id }
         val ranked = pool.sortedByDescending { id ->
             val c = counters[id]
             ProfileMath.sampleBeta(c?.alpha ?: 1.0, c?.beta ?: 1.0, rnd)
         }
-        val top = ranked.take(3)
+        val top = ranked.take(5)
         val explore = (pool - top.toSet()).randomOrNull(rnd)
         return top + listOfNotNull(explore)
     }

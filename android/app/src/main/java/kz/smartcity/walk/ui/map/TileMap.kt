@@ -584,3 +584,27 @@ private fun hitMarker(camera: MapCamera, markers: List<MapMarker>, pos: Offset, 
         .map { (m, s) -> m to (Offset(s.x, s.y - 22 * d) - pos).getDistance() }
         .filter { it.second < 30 * d }
         .minByOrNull { it.second }?.first?.id
+
+/**
+ * Фрагмент карты 2ГИС вокруг места с меткой — обложка карточки, когда у места нет фото (как в Google Картах).
+ * Жестов нет: это картинка, а не карта.
+ */
+@Composable
+fun PlacePreviewMap(at: LatLng, pin: Color, modifier: Modifier = Modifier, zoom: Double = 16.3) {
+    val density = LocalDensity.current
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    if (TileStore.dir == null) TileStore.dir = java.io.File(ctx.filesDir, "tiles")
+    val camera = remember(at.lat, at.lon) { MapCamera(at, zoom) }
+    camera.tilePx = TILE_DP * density.density
+    val scope = rememberCoroutineScope()
+    Canvas(modifier.onSizeChanged { camera.size = it }) {
+        TileStore.version.intValue // перерисовать, когда догрузятся тайлы
+        drawRect(Color(0xFFEDEAE2))
+        drawTiles(camera, scope)
+        val s = camera.toScreen(at.lat, at.lon)
+        val d = density.density
+        drawCircle(pin.copy(alpha = 0.25f), 26 * d, s)
+        drawCircle(Color.White, 13 * d, s)
+        drawCircle(pin, 9.5f * d, s)
+    }
+}

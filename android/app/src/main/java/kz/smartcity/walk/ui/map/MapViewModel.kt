@@ -273,11 +273,11 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
         else routeTo(Target(id ?: "point", s.title, s.lat, s.lon))
     }
 
-    fun search(text: String, filters: JevFilters? = null) {
+    fun search(text: String, filters: JevFilters? = null, previousOverride: PreviousAnswer? = null) {
         val query = text.trim()
         if (query.isEmpty()) return
         // Ответ ещё на экране — новый запрос может его уточнять: передаём прошлые точки ИИ.
-        val previous = _state.value.answer?.takeIf { _state.value.sheet != SheetMode.NONE && filters == null }?.let { a ->
+        val previous = previousOverride ?: _state.value.answer?.takeIf { _state.value.sheet != SheetMode.NONE && filters == null }?.let { a ->
             val stops = a.plan?.legs?.map { PreviousItem(it.to, it.name, it.lat, it.lon, it.purpose, it.transport) }
                 ?: a.items.map { PreviousItem(it.poiId, it.name, it.lat, it.lon, transport = it.transport) }
             PreviousAnswer(_state.value.lastQuery, a.summary, trip = a.plan != null, items = stops.take(8))
@@ -510,6 +510,28 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
         }
     }
 
+    /** Сведения о месте назначения во время поездки: адрес, категория, режим работы, рейтинг, телефон. */
+    val navPlace = kotlinx.coroutines.flow.MutableStateFlow<PlaceCard?>(null)
+    private var navPlaceJob: Job? = null
+
+    fun loadNavPlace(dest: NavDestination) {
+        if (navPlace.value?.poiId == dest.poiId) return
+        navPlaceJob?.cancel()
+        val quick = g.places.items.value.firstOrNull { "saved:${it.id}" == dest.poiId }
+        navPlace.value = PlaceCard(poiId = dest.poiId, name = dest.name, lat = dest.lat, lon = dest.lon,
+            address = quick?.address, category = dest.category, openUntil = dest.openUntil)
+        // У сохранённых мест, адресов и точек на карте карточки 2ГИС нет — остаётся то, что известно.
+        if (dest.poiId.startsWith("saved:") || dest.poiId.startsWith("addr:") || dest.poiId == "point") return
+        navPlaceJob = viewModelScope.launch {
+            try {
+                val card = g.api.place(dest.poiId)
+                if (navPlace.value?.poiId == dest.poiId) navPlace.value = card
+            } catch (_: ApiException) {
+                // нет сети — показываем имя и то, что было
+            }
+        }
+    }
+
     fun stopNavigation() {
         _state.update { it.copy(planLeg = null) }
         NavigationService.stop(g.app)
@@ -574,6 +596,7 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
     private fun handleIntent(intent: AppIntent) {
         when (intent) {
             is AppIntent.Search -> search(intent.query)
+            is AppIntent.Trip -> search(intent.query, previousOverride = PreviousAnswer(intent.query, trip = true, items = intent.stops))
             is AppIntent.RouteTo -> {
                 val i = intent.item
                 pendingNavigation = intent.startNavigation

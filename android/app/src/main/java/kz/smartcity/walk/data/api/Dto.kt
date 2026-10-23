@@ -312,6 +312,19 @@ data class DeckRequest(
     val extraAreas: List<LatLonDto> = emptyList(),
     val profileSummary: String = "",
     val lang: String = "ru",
+    val filters: DeckFiltersDto = DeckFiltersDto(),
+    val recentQueries: List<String> = emptyList(),
+)
+
+/** Фильтры колоды для сервера (что можно отобрать по данным 2ГИС). */
+@Serializable
+data class DeckFiltersDto(
+    val openNow: Boolean = false,
+    val maxEtaMin: Int? = null,
+    val place: String = "any",
+    val kids: Boolean = false,
+    val budget: String = "any",
+    val minRating: Double? = null,
 )
 
 @Serializable
@@ -336,6 +349,13 @@ data class DeckCard(
     val contextChip: String? = null,
     val why: String? = null,
     val address: String? = null,
+    /** Фото места (сайт заведения, Википедия, OpenStreetMap) и подпись источника. */
+    val photoUrl: String? = null,
+    val photoSource: String? = null,
+    val avgCheck: Int? = null,
+    val kids: Boolean = false,
+    /** Карточка подобрана по недавнему поиску. */
+    val fromSearch: String? = null,
 )
 
 @Serializable

@@ -296,10 +296,22 @@ class RouteOut(BaseModel):
     options: list[RouteOption] = Field(default_factory=list)
 
 
+class DeckFilters(BaseModel):
+    """Фильтры «Для вас»: что человек отметил в панели фильтров."""
+    open_now: bool = False                                 # открыто сейчас и к приходу
+    max_eta_min: int | None = Field(default=None, ge=3, le=120)
+    place: Literal["any", "indoor", "outdoor"] = "any"     # под крышей / на улице
+    kids: bool = False                                     # подходит детям
+    budget: Literal["any", "cheap", "mid"] = "any"         # средний чек до 3000 ₸ / до 7000 ₸
+    min_rating: float | None = Field(default=None, ge=0, le=5)
+
+
 class DeckRequest(GeoRequest):
     local_time: datetime
     transport: Transport = "walking"
-    categories: list[str] = Field(min_length=1, max_length=4)
+    categories: list[str] = Field(min_length=1, max_length=6)
+    filters: DeckFilters = Field(default_factory=DeckFilters)
+    recent_queries: list[str] = Field(default_factory=list, max_length=8)
     extra_areas: list[GeoRequest] = Field(default_factory=list, max_length=3)
     profile_summary: str = Field(default="", max_length=2000)
     lang: str = "ru"
@@ -331,6 +343,11 @@ class DeckCard(BaseModel):
     context_chip: str | None = None
     why: str | None = None
     address: str | None = None
+    photo_url: str | None = None      # фото места (сайт заведения или Википедия)
+    photo_source: str | None = None   # откуда фото — подпись на карточке
+    avg_check: int | None = None      # средний чек, ₸
+    kids: bool = False
+    from_search: str | None = None    # карточка подобрана по недавнему запросу
 
 
 class ProfileEvent(BaseModel):

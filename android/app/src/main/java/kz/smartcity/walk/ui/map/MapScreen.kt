@@ -119,7 +119,9 @@ fun MapScreen(vm: MapViewModel, hazeState: HazeState, modifier: Modifier = Modif
               active: Boolean = true, wide: Boolean = false) {
     val s by vm.state.collectAsStateWithLifecycle()
     val quick by vm.quickPlaces.collectAsStateWithLifecycle()
+    val navPlace by vm.navPlace.collectAsStateWithLifecycle()
     val nav by NavigationBus.state.collectAsStateWithLifecycle()
+    LaunchedEffect(nav?.dest?.poiId) { nav?.dest?.let { vm.loadNavPlace(it) } }
     val context = LocalContext.current
     val density = LocalDensity.current
     val haptics = LocalHaptics.current
@@ -311,6 +313,7 @@ fun MapScreen(vm: MapViewModel, hazeState: HazeState, modifier: Modifier = Modif
             if (current != null) NavigationOverlay(current, vm, bottomSpace = bottomSpace, wide = wide, follow = follow,
                 compass = camMode == CamMode.COMPASS,
                 nextStop = s.planLeg?.let { vm.nextPlanLeg() },
+                place = navPlace?.takeIf { it.poiId == current.dest.poiId },
                 onNextStop = { haptics?.tap(); follow = true; s.planLeg?.let { vm.startPlanLeg(it + 1) } },
                 onCompass = {
                     haptics?.tap()

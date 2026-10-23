@@ -62,6 +62,30 @@ object ProfileMath {
     fun deckScore(theta: Double, k: Double, etaMin: Double, q: Double, novelty: Double): Double =
         0.30 * theta + 0.20 * k + 0.20 * exp(-etaMin / 10.0) + 0.15 * q + 0.15 * novelty
 
+    /**
+     * Черты карточки, на которые влияют свайпы (кроме самой категории): под крышей или на улице, цена,
+     * расстояние, высокий рейтинг. «Не то» кафе далеко и дорого — снижает вес «далеко» и «дорого», а не только кафе.
+     */
+    fun features(indoor: Boolean, avgCheck: Int?, etaMin: Int?, rating: Double?): List<String> = buildList {
+        add(if (indoor) "feat:indoor" else "feat:outdoor")
+        when {
+            avgCheck == null -> Unit
+            avgCheck <= 3000 -> add("feat:cheap")
+            avgCheck <= 7000 -> add("feat:mid")
+            else -> add("feat:pricey")
+        }
+        when {
+            etaMin == null -> Unit
+            etaMin <= 8 -> add("feat:near")
+            etaMin >= 20 -> add("feat:far")
+        }
+        if (rating != null && rating >= 4.6) add("feat:toprated")
+    }
+
+    /** Множитель за черты: средний интерес (0,5) — 1,0; каждая черта даёт от 0,75 до 1,25; итог в пределах 0,5…1,6. */
+    fun featureFactor(features: List<String>, affinity: (String) -> Double?): Double =
+        features.fold(1.0) { acc, f -> acc * (0.75 + 0.5 * (affinity(f) ?: 0.5)) }.coerceIn(0.5, 1.6)
+
     /** Разнообразие: next = argmax [0.7·s_i − 0.3·max sim(i, j∈S)]; sim = 1 та же категория, 0.5 та же группа. */
     fun <T> diversify(items: List<T>, score: (T) -> Double, category: (T) -> String, group: (T) -> String?, take: Int): List<T> {
         val left = items.toMutableList()

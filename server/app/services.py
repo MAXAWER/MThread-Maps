@@ -30,6 +30,7 @@ class Services:
     questions: dict
     counters: UsageCounters
     data_source: str       # "2gis" | "demo"
+    http: Any = None       # общий httpx-клиент (фото мест)
 
     async def filters_for(self, state: dict, nums: ParsedNumbers) -> JevFilters:
         """Jev → JevFilters. Jev недоступен — поиск по исходному тексту и чип «Фильтры не определены»."""
@@ -69,4 +70,5 @@ def build_services(settings: Settings, http: httpx.AsyncClient) -> Services:
         llm = TemplateLLM(catalog)
     weather = WeatherService(http, settings)
     log.info("services: %s", settings.describe())
-    return Services(settings, catalog, places, jev, llm, weather, questions, counters, data_source)
+    return Services(settings, catalog, places, jev, llm, weather, questions, counters, data_source,
+                    http=None if settings.demo_mode else http)

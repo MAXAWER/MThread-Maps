@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
+import androidx.compose.material3.SegmentedButton
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -173,123 +174,120 @@ private fun LockedScreen(gate: ForYouGate, bottomSpace: Dp, onPick: () -> Unit) 
     }
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun DeckScreen(vm: ForYouViewModel, modifier: Modifier = Modifier, bottomSpace: Dp = 0.dp, onTune: () -> Unit) {
     val cards by vm.cards.collectAsStateWithLifecycle()
-    val saved by vm.saved.collectAsStateWithLifecycle()
+    val liked by vm.liked.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
-    val lastLiked by vm.lastLiked.collectAsStateWithLifecycle()
+    val last by vm.lastSwipe.collectAsStateWithLifecycle()
+    val filters by vm.filters.collectAsStateWithLifecycle()
+    val weather by vm.weather.collectAsStateWithLifecycle()
     val haptics = LocalHaptics.current
     val scope = rememberCoroutineScope()
     val progress = remember { mutableFloatStateOf(0f) } // насколько верхняя карта ушла к порогу: 0…1
     val top = cards.firstOrNull()
     val motion = remember(top?.card?.poiId) { DeckMotion() }
+    var tab by rememberSaveable { androidx.compose.runtime.mutableIntStateOf(0) }
+    var showFilters by rememberSaveable { mutableStateOf(false) }
 
-    Column(
-        modifier.fillMaxSize()
-            // Плотная подложка: сквозь неё едва видна размытая карта на дальнем слое.
-            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.96f))
-            .statusBarsPadding()
-            .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = bottomSpace),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Для вас", style = MaterialTheme.typography.headlineLarge)
-                Text("Подборка рядом: по портрету, времени и погоде", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            BubbleIconButton(onClick = onTune, icon = Icons.Filled.Tune, contentDescription = "Интересы",
-                size = 50.dp, tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(8.dp))
-            BubbleIconButton(onClick = { vm.refresh(force = false) }, icon = Icons.Filled.Refresh, contentDescription = "Обновить колоду",
-                size = 50.dp, tint = MaterialTheme.colorScheme.primary)
-        }
-        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 6.dp))
-        message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        Spacer(Modifier.height(14.dp))
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            val widthPx = with(LocalDensity.current) { maxWidth.toPx() }
-            if (cards.isEmpty()) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Text(if (busy) "Собираем колоду…" else "Колода пуста", style = MaterialTheme.typography.titleLarge)
-                    Text("Карточки подбираются в фоне, вкладка открывается сразу.", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    BubbleGhostButton(onClick = { vm.refresh(force = false) }, enabled = !busy) { Text("Собрать сейчас") }
+    Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background.copy(alpha = 0.96f))) {
+        Column(Modifier.fillMaxSize().statusBarsPadding().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = bottomSpace)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Для вас", style = MaterialTheme.typography.headlineLarge)
+                    // Что учтено: погода сейчас, интересы и недавние поиски.
+                    Text(weather?.let { "Сейчас $it · под погоду, ваши интересы и поиски" }
+                        ?: "По вашим интересам, погоде и недавним поискам",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
                 }
-            } else {
-                // Три верхние карты стопкой: дальние — меньше, ниже, размытее и темнее.
-                val visible = cards.take(3)
-                visible.reversed().forEachIndexed { i, item ->
-                    val depth = visible.lastIndex - i
-                    key(item.card.poiId) {
-                        DeckCard(
-                            item = item, depth = depth, motion = if (depth == 0) motion else null, progress = progress,
-                            widthPx = widthPx, modifier = Modifier.align(Alignment.TopCenter),
-                            onSwiped = { like -> progress.floatValue = 0f; vm.swipe(item, like) },
-                            onDetails = { vm.openDetails(item) },
-                        )
+                BubbleIconButton(onClick = onTune, icon = Icons.Filled.Tune, contentDescription = "Интересы",
+                    size = 48.dp, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                BubbleIconButton(onClick = { vm.refresh(force = true) }, icon = Icons.Filled.Refresh, contentDescription = "Обновить подборку",
+                    size = 48.dp, tint = MaterialTheme.colorScheme.primary)
+            }
+            Spacer(Modifier.height(10.dp))
+            androidx.compose.material3.SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                listOf("Подборка", "Понравившиеся · ${liked.size}").forEachIndexed { i, label ->
+                    SegmentedButton(
+                        selected = tab == i, onClick = { haptics?.tick(0.5f); tab = i },
+                        shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(i, 2),
+                    ) { Text(label, maxLines = 1) }
+                }
+            }
+            if (busy) androidx.compose.material3.LinearWavyProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 6.dp))
+            message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)) }
+            if (tab == 1) {
+                LikedList(liked, vm, bottomSpace = 0.dp, modifier = Modifier.weight(1f).fillMaxWidth())
+                return@Column
+            }
+            QuickFilters(filters, onChange = { haptics?.tick(0.4f); vm.setFilters(it) }, onAll = { showFilters = true })
+            Spacer(Modifier.height(8.dp))
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                val widthPx = with(LocalDensity.current) { maxWidth.toPx() }
+                if (cards.isEmpty()) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Text(if (busy) "Собираем подборку…" else "Подборка пуста", style = MaterialTheme.typography.titleLarge)
+                        Text(if (filters.activeCount > 0) "Попробуйте ослабить фильтры" else "Карточки подбираются в фоне",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        BubbleGhostButton(onClick = { vm.refresh(force = true) }, enabled = !busy) { Text("Собрать сейчас") }
+                    }
+                } else {
+                    // Три верхние карты стопкой: дальние — меньше, ниже, размытее и темнее.
+                    val visible = cards.take(3)
+                    visible.reversed().forEachIndexed { i, item ->
+                        val depth = visible.lastIndex - i
+                        key(item.card.poiId) {
+                            DeckCard(
+                                item = item, depth = depth, motion = if (depth == 0) motion else null, progress = progress,
+                                widthPx = widthPx, modifier = Modifier.align(Alignment.TopCenter),
+                                onSwiped = { like -> progress.floatValue = 0f; vm.swipe(item, like) },
+                                onDetails = { vm.openDetails(item) },
+                            )
+                        }
                     }
                 }
             }
-        }
-        if (top != null) {
-            Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically) {
-                BubbleIconButton(
-                    onClick = {
-                        scope.launch {
-                            motion.x.animateTo(-1800f, spring(dampingRatio = 0.9f, stiffness = 140f))
-                            progress.floatValue = 0f
-                            vm.swipe(top, false)
-                        }
-                    },
-                    onPress = { haptics?.dislike() },
-                    icon = Icons.Filled.Close, contentDescription = "Не то", size = 66.dp, tint = MaterialTheme.colorScheme.error,
-                    glow = MaterialTheme.colorScheme.error,
-                )
-                BubbleIconButton(onClick = { vm.openDetails(top) }, icon = Icons.Filled.Info, contentDescription = "Карточка места",
-                    size = 54.dp, tint = MaterialTheme.colorScheme.primary)
-                BubbleIconButton(
-                    onClick = {
-                        scope.launch {
-                            motion.x.animateTo(1800f, spring(dampingRatio = 0.9f, stiffness = 140f))
-                            progress.floatValue = 0f
-                            vm.swipe(top, true)
-                        }
-                    },
-                    onPress = { haptics?.like() },
-                    icon = Icons.Filled.Favorite, contentDescription = "Хочу", size = 66.dp, fill = Fills.accent(),
-                    tint = MaterialTheme.colorScheme.onSecondary, glow = MaterialTheme.colorScheme.secondary, depth = Depth.SHEET,
-                )
-            }
-        }
-        AnimatedVisibility(visible = lastLiked != null, enter = slideInVertically(spring(0.6f)) { it } + fadeIn(), exit = fadeOut()) {
-            lastLiked?.let { liked ->
-                Row(Modifier.fillMaxWidth().bubble(BubbleShapes.Pill, Fills.accent(), Depth.FLOAT, glow = MaterialTheme.colorScheme.secondary)
-                    .padding(start = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Сохранено: ${liked.card.name}", modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSecondary, fontWeight = FontWeight.SemiBold)
-                    androidx.compose.material3.TextButton(onClick = { haptics?.tap(); vm.routeTo(liked) }) {
-                        Text("Маршрут", color = MaterialTheme.colorScheme.onSecondary, fontWeight = FontWeight.Bold)
-                    }
-                    BubbleIconButton(onClick = vm::clearLiked, icon = Icons.Filled.Close, contentDescription = "Скрыть", size = 44.dp,
-                        depth = Depth.FLOOR, fill = Fills.glass(0.0f), tint = MaterialTheme.colorScheme.onSecondary)
+            if (top != null) {
+                Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    BubbleIconButton(
+                        onClick = {
+                            scope.launch {
+                                motion.x.animateTo(-1800f, spring(dampingRatio = 0.9f, stiffness = 140f))
+                                progress.floatValue = 0f
+                                vm.swipe(top, false)
+                            }
+                        },
+                        onPress = { haptics?.dislike() },
+                        icon = Icons.Filled.Close, contentDescription = "Не то", size = 64.dp, tint = MaterialTheme.colorScheme.error,
+                        glow = MaterialTheme.colorScheme.error,
+                    )
+                    BubbleIconButton(onClick = { vm.openDetails(top) }, icon = Icons.Filled.Info, contentDescription = "Карточка места",
+                        size = 52.dp, tint = MaterialTheme.colorScheme.primary)
+                    BubbleIconButton(
+                        onClick = {
+                            scope.launch {
+                                motion.x.animateTo(1800f, spring(dampingRatio = 0.9f, stiffness = 140f))
+                                progress.floatValue = 0f
+                                vm.swipe(top, true)
+                            }
+                        },
+                        onPress = { haptics?.like() },
+                        icon = Icons.Filled.Favorite, contentDescription = "Хочу", size = 64.dp, fill = Fills.accent(),
+                        tint = MaterialTheme.colorScheme.onSecondary, glow = MaterialTheme.colorScheme.secondary, depth = Depth.SHEET,
+                    )
                 }
             }
         }
-        if (saved.isNotEmpty()) {
-            Text("Хочу сходить", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 6.dp),
-                flingBehavior = rememberFrictionFling(1.2f)) {
-                items(saved, key = { it.poiId }) { p ->
-                    BubbleChip(p.name, onClick = { vm.routeToSaved(p) }, leading = categoryIcon(p.category))
-                }
-            }
-        }
+        SwipeBar(last, liked.size, onUndo = { haptics?.tap(); vm.undo() }, onOpenLiked = { vm.dismissSwipe(); tab = 1 },
+            modifier = Modifier.align(Alignment.BottomCenter).padding(start = 12.dp, end = 12.dp, bottom = bottomSpace + 8.dp))
     }
+    if (showFilters) FiltersSheet(filters, onApply = { vm.setFilters(it); showFilters = false }, onDismiss = { showFilters = false })
 }
-
 @Composable
 private fun DeckCard(
     item: DeckItem,
@@ -433,19 +431,9 @@ private fun DeckCardContent(item: DeckItem, likeHint: Float) {
     val c = item.card
     val color = groupColor(c.group)
     Column(Modifier.fillMaxSize()) {
-        // Иллюстрация категории: фото мест Places API не подтверждены, поэтому векторные «пузыри».
-        Box(
-            Modifier.fillMaxWidth().weight(1f)
-                .background(color),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(Modifier.size(210.dp).align(Alignment.TopStart).padding(0.dp)
-                .graphicsLayer { translationX = -60f; translationY = -40f }
-                .bubble(BubbleShapes.Pill, Fills.glass(0.18f), Depth.FLOOR))
-            Box(Modifier.size(90.dp).align(Alignment.BottomEnd)
-                .graphicsLayer { translationX = -30f; translationY = -50f }
-                .bubble(BubbleShapes.Pill, Fills.glass(0.14f), Depth.FLOOR))
-            CategoryBadge(c.category, 132.dp)
+        // Обложка: фото места (сайт, Википедия, OpenStreetMap), иначе карта вокруг него с меткой.
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            CardCover(item, Modifier.fillMaxSize())
             if (likeHint > 0.3f) Stamp("ХОЧУ", MaterialTheme.colorScheme.tertiary, Modifier.align(Alignment.TopStart), likeHint)
             if (likeHint < -0.3f) Stamp("НЕ ТО", MaterialTheme.colorScheme.error, Modifier.align(Alignment.TopEnd), -likeHint)
             c.contextChip?.let {
@@ -470,8 +458,9 @@ private fun DeckCardContent(item: DeckItem, likeHint: Float) {
                 OpenStateText(c.openState, c.openUntil)
             }
             RatingText(c.rating, c.reviews)
-            c.why?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-            SourceBadge("poi_data", item.dataSource)
+            c.why?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis) }
+            c.address?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
     }
 }

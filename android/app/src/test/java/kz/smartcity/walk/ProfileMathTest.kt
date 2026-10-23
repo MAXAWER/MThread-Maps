@@ -45,4 +45,16 @@ class ProfileMathTest {
         val s = ProfileMath.deckScore(theta = 1.0, k = 1.0, etaMin = 0.0, q = 1.0, novelty = 1.0)
         assertEquals(1.0, s, 1e-9)
     }
+
+    @Test
+    fun swipeFeaturesShiftTheScore() {
+        val f = kz.smartcity.walk.data.repo.ProfileMath.features(indoor = false, avgCheck = 9000, etaMin = 25, rating = 4.8)
+        org.junit.Assert.assertEquals(listOf("feat:outdoor", "feat:pricey", "feat:far", "feat:toprated"), f)
+        val neutral = kz.smartcity.walk.data.repo.ProfileMath.featureFactor(f) { null }
+        org.junit.Assert.assertEquals(1.0, neutral, 1e-9)
+        // «Не то» далеко и дорого — такие карточки опускаются, любимые черты — поднимаются.
+        val disliked = kz.smartcity.walk.data.repo.ProfileMath.featureFactor(f) { if (it == "feat:far" || it == "feat:pricey") 0.2 else 0.5 }
+        val liked = kz.smartcity.walk.data.repo.ProfileMath.featureFactor(f) { if (it == "feat:outdoor") 0.9 else 0.5 }
+        org.junit.Assert.assertTrue(disliked < 0.75 && liked > 1.15)
+    }
 }

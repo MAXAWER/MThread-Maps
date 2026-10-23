@@ -132,6 +132,7 @@ fun NavigationOverlay(
     s: NavState, vm: MapViewModel, bottomSpace: Dp, wide: Boolean, follow: Boolean,
     compass: Boolean, onCompass: () -> Unit,
     nextStop: kz.smartcity.walk.data.api.PlanLeg? = null, onNextStop: () -> Unit = {},
+    place: PlaceCard? = null,
     onRecenter: () -> Unit, onOverview: () -> Unit, onOpen2gis: (Target) -> Unit,
 ) {
     val context = LocalContext.current
@@ -227,8 +228,9 @@ fun NavigationOverlay(
                             Text("${s.etaMin} мин", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                             Text("Прибытие в $arrival · ${formatDistance(s.remainingM)}", style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(s.dest.name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            // Куда едем: название и адрес видны всегда, подробности — в развёрнутой карточке.
+                            Text(listOfNotNull(s.dest.name, place?.address).joinToString(" · "), style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                         IconButton(onClick = { NavigationService.toggleSound(context) }) {
                             Icon(if (s.soundOn) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
@@ -240,7 +242,9 @@ fun NavigationOverlay(
                         }
                     }
                     AnimatedVisibility(expanded, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
-                        Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                        Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            DestinationInfo(s, place)
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                             if (s.legs.isNotEmpty()) s.legs.forEachIndexed { i, leg -> StepRow(s, i, leg) }
                             else s.note?.let { Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 10.dp)) }
@@ -401,6 +405,41 @@ private fun StepRow(s: NavState, i: Int, leg: TransitLeg) {
                 Text(leg.stopNames.drop(1).dropLast(1).filterNotNull().joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+            }
+        }
+    }
+}
+
+/** О месте назначения: название, категория, адрес, режим работы, рейтинг, средний чек; позвонить и сайт. */
+@Composable
+private fun DestinationInfo(s: NavState, place: PlaceCard?) {
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
+    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Куда едем", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        Text(s.dest.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        (place?.categoryName ?: place?.rubrics?.firstOrNull())?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text(place?.address ?: "Адрес уточняется…", style = MaterialTheme.typography.bodyMedium)
+        val hours = when (place?.openState) {
+            "open" -> place.openUntil?.let { "Открыто до $it" } ?: "Открыто"
+            "closing_soon" -> "Скоро закроется" + (place.openUntil?.let { " (в $it)" } ?: "")
+            "closed" -> "Закрыто" + (place.opensAt?.let { " · откроется в $it" } ?: "")
+            else -> s.dest.openUntil?.let { "Открыто до $it" }
+        }
+        hours?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = if (place?.openState == "closed")
+            MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary) }
+        val facts = listOfNotNull(place?.rating?.let { "★ ${"%.1f".format(it)}" + (place.reviews?.let { r -> " · $r отзывов" } ?: "") },
+            place?.avgCheck?.let { "средний чек ~$it ₸" })
+        if (facts.isNotEmpty()) Text(facts.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+        if (place?.attributes?.isNotEmpty() == true) Text(place.attributes.take(4).joinToString(" · "), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            place?.phone?.let { phone ->
+                FilledTonalButton(onClick = { runCatching { uri.openUri("tel:" + phone.filter { it.isDigit() || it == '+' }) } }) { Text("Позвонить") }
+            }
+            place?.website?.let { site ->
+                OutlinedButton(onClick = { runCatching { uri.openUri(if (site.startsWith("http")) site else "https://$site") } }) { Text("Сайт") }
             }
         }
     }

@@ -17,6 +17,8 @@ sealed interface AppIntent {
     data class Search(val query: String) : AppIntent
     data class ShowItems(val title: String, val items: List<AnswerItem>) : AppIntent
     data class OpenPlace(val card: kz.smartcity.walk.data.api.PlaceCard) : AppIntent
+    /** Маршрут по выбранным местам: ИИ подбирает порядок и дорогу между ними. */
+    data class Trip(val query: String, val stops: List<kz.smartcity.walk.data.api.PreviousItem>) : AppIntent
 }
 
 /** Простой ручной DI: один экземпляр на процесс. */
@@ -29,7 +31,8 @@ class AppGraph(context: Context) {
     val db = AppDatabase.create(app)
     val history = HistoryRepository(db)
     val profile = ProfileRepository(db, api.json)
-    val deck = DeckRepository(db, api, profile, history, settings, api.json)
+    val deckFilters = kz.smartcity.walk.data.DeckFiltersStore(app)
+    val deck = DeckRepository(db, api, profile, history, settings, api.json, deckFilters, places)
     val location = LocationProvider(app, settings)
     val haptics = kz.smartcity.walk.ui.fx.Haptics(app) { settings.hapticsOn }
     val intents = MutableSharedFlow<AppIntent>(replay = 1, extraBufferCapacity = 4)

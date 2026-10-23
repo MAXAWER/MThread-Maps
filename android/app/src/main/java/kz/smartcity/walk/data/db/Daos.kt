@@ -100,6 +100,19 @@ interface DeckDao {
     @Query("UPDATE deck_card SET status = :status WHERE poiId = :poiId")
     suspend fun setStatus(poiId: String, status: String)
 
+    @Query("SELECT * FROM deck_card WHERE status = 'new' ORDER BY rank")
+    suspend fun newList(): List<DeckCardEntity>
+
+    @Query("UPDATE deck_card SET rank = :rank WHERE poiId = :poiId")
+    suspend fun setRank(poiId: String, rank: Int)
+
+    /** Понравившиеся карточки целиком (с фото, рейтингом, «почему») — для раздела «Понравившиеся». */
+    @Query("SELECT * FROM deck_card WHERE status IN ('liked', 'visited') ORDER BY createdMs DESC")
+    fun likedCards(): Flow<List<DeckCardEntity>>
+
+    @Query("SELECT * FROM deck_card WHERE poiId = :poiId LIMIT 1")
+    suspend fun byId(poiId: String): DeckCardEntity?
+
     @Query("SELECT poiId FROM deck_card WHERE status != 'new' AND createdMs >= :sinceMs")
     suspend fun swipedIds(sinceMs: Long): List<String>
 
