@@ -202,6 +202,8 @@ data class Answer(
     val remember: RememberOffer? = null,
     /** Шаги запроса, которые выполнить нельзя, с причиной. */
     val skipped: List<String> = emptyList(),
+    /** Человек просил «веди» — навигация запускается сразу. */
+    val startNavigation: Boolean = false,
 )
 
 /** Прошлый ответ на экране — новый запрос может его уточнять («добавь аптеку»). */
@@ -236,6 +238,23 @@ data class SearchRequest(
     val filters: JevFilters? = null,
     val savedPlaces: List<SavedPlaceIn> = emptyList(),
     val previous: PreviousAnswer? = null,
+    val appState: AppStateDto? = null,
+)
+
+/** Что сейчас в приложении — контекст для ИИ: экран, маршрут, навигация, план, понравившееся, заряд. */
+@Serializable
+data class AppStateDto(
+    val screen: String = "map",
+    val routeTo: PreviousItem? = null,
+    val routeTransport: String? = null,
+    val routeOption: String? = null,
+    val navTo: PreviousItem? = null,
+    val navRemainingMin: Int? = null,
+    val plan: List<PreviousItem> = emptyList(),
+    val liked: List<PreviousItem> = emptyList(),
+    val recentQueries: List<String> = emptyList(),
+    val battery: Int? = null,
+    val charging: Boolean? = null,
 )
 
 @Serializable

@@ -14,6 +14,7 @@ from datetime import date
 import httpx
 
 from .cache import TTLCache
+from .store import STORE
 from .catalog import Catalog
 from .config import Settings
 
@@ -410,30 +411,40 @@ class DgisClient:
         self._places_cache = TTLCache(24 * 3600)
         self._short_cache = TTLCache(600)
 
-    async def _get(self, service: str, url: str, params: dict) -> dict:
-        self.counters.hit(service)
-        params = {**params, "key": self._s.dgis_key}
-        try:
-            r = await self._http.get(url, params=params, timeout=4.0)
-        except httpx.HTTPError as exc:
-            raise DgisError(f"{service}: {type(exc).__name__}") from exc
-        if r.status_code >= 500:
-            raise DgisError(f"{service}: http {r.status_code}")
-        try:
-            return r.json()
-        except ValueError as exc:
-            raise DgisError(f"{service}: bad json") from exc
+    async def _get(self, service: str, url: str, params: dict, ttl_s: float = 3 * 86400) -> dict:
+        """GET к 2ГИС через общий кэш ответов: повторный запрос квоту не тратит, при лимите — сохранённая копия."""
+        async def load() -> dict:
+            self.counters.hit(service)
+            try:
+                r = await self._http.get(url, params={**params, "key": self._s.dgis_key}, timeout=4.0)
+            except httpx.HTTPError as exc:
+                raise DgisError(f"{service}: {type(exc).__name__}") from exc
+            if r.status_code >= 400:
+                raise DgisError(f"{service}: http {r.status_code}")
+            try:
+                data = r.json()
+            except ValueError as exc:
+                raise DgisError(f"{service}: bad json") from exc
+            meta = data.get("meta") or {}
+            if meta.get("code", 200) not in (200, 404):  # ошибка в теле ответа (лимит, ключ) — не кэшируем
+                raise DgisError(f"{service}: {(meta.get('error') or {}).get('message') or meta.get('code')}")
+            return data
 
-    async def _post(self, service: str, url: str, body: dict, params: dict | None = None, timeout: float = 6.0):
-        self.counters.hit(service)
-        params = {**(params or {}), "key": self._s.dgis_key}
-        try:
-            r = await self._http.post(url, params=params, json=body, timeout=timeout)
-        except httpx.HTTPError as exc:
-            raise DgisError(f"{service}: {type(exc).__name__}") from exc
-        if r.status_code >= 400:
-            raise DgisError(f"{service}: http {r.status_code} {r.text[:300]}")
-        return r.json()
+        return await STORE.fetch(service, [url, params, self._locale], ttl_s, load, retry_on=(DgisError,))
+
+    async def _post(self, service: str, url: str, body: dict, params: dict | None = None, timeout: float = 6.0,
+                    ttl_s: float = 600):
+        async def load() -> dict:
+            self.counters.hit(service)
+            try:
+                r = await self._http.post(url, params={**(params or {}), "key": self._s.dgis_key}, json=body, timeout=timeout)
+            except httpx.HTTPError as exc:
+                raise DgisError(f"{service}: {type(exc).__name__}") from exc
+            if r.status_code >= 400:
+                raise DgisError(f"{service}: http {r.status_code} {r.text[:300]}")
+            return r.json()
+
+        return await STORE.fetch(service, [url, body, params], ttl_s, load, retry_on=(DgisError,))
 
     def _items(self, data: dict) -> list[dict]:
         meta = data.get("meta") or {}
@@ -466,35 +477,21 @@ class DgisClient:
             params["opened_after_date"] = opened_after.isoformat()
         if extra:
             params.update(extra)
-        key = ("places", tuple(sorted(params.items())))
-        cached = self._places_cache.get(key)
-        if cached is not None:
-            return cached
-        data = await self._get("places", f"{self._s.dgis_catalog_url}/3.0/items", params)
-        places = [p for i, it in enumerate(self._items(data)) if (p := parse_place(it, self._catalog, i))]
-        self._places_cache.set(key, places)
-        return places
+        # Поиск мест хранится 3 дня: часы работы и рейтинги меняются редко, а расписание пересчитывается на лету.
+        data = await self._get("places", f"{self._s.dgis_catalog_url}/3.0/items", params, ttl_s=3 * 86400)
+        return [p for i, it in enumerate(self._items(data)) if (p := parse_place(it, self._catalog, i))]
 
     async def place_by_id(self, place_id: str) -> Place | None:
-        key = ("byid", place_id)
-        cached = self._places_cache.get(key)
-        if cached is not None:
-            return cached
         data = await self._get("places", f"{self._s.dgis_catalog_url}/3.0/items/byid",
-                               {"id": place_id, "fields": self._s.dgis_place_fields, "locale": self._locale})
+                               {"id": place_id, "fields": self._s.dgis_place_fields, "locale": self._locale}, ttl_s=7 * 86400)
         items = self._items(data)
-        place = parse_place(items[0], self._catalog) if items else None
-        if place:
-            self._places_cache.set(key, place)
-        return place
+        return parse_place(items[0], self._catalog) if items else None
 
     async def suggest(self, q: str, lat: float, lon: float) -> list[dict]:
-        key = ("suggest", q.lower(), round(lat, 2), round(lon, 2))
-        cached = self._short_cache.get(key)
-        if cached is not None:
-            return cached
+        # Точка подсказок округлена до ~1 км: соседи по району пользуются одним и тем же ответом.
         data = await self._get("suggest", f"{self._s.dgis_catalog_url}/3.0/suggests",
-                               {"q": q, "location": f"{lon},{lat}", "fields": "items.point", "locale": self._locale})
+                               {"q": q.strip().lower(), "location": f"{round(lon, 2)},{round(lat, 2)}", "fields": "items.point",
+                                "locale": self._locale}, ttl_s=7 * 86400)
         out = []
         for it in self._items(data):
             point = it.get("point") or {}
@@ -506,12 +503,12 @@ class DgisClient:
                 "lat": point.get("lat"),
                 "lon": point.get("lon"),
             })
-        self._short_cache.set(key, out)
         return out
 
     async def geocode(self, q: str, lat: float, lon: float) -> list[dict]:
         data = await self._get("geocoder", f"{self._s.dgis_catalog_url}/3.0/items/geocode",
-                               {"q": q, "location": f"{lon},{lat}", "fields": "items.point", "locale": self._locale})
+                               {"q": q.strip().lower(), "location": f"{round(lon, 2)},{round(lat, 2)}", "fields": "items.point",
+                                "locale": self._locale}, ttl_s=30 * 86400)
         out = []
         for it in self._items(data):
             point = it.get("point") or {}
@@ -543,13 +540,9 @@ class DgisClient:
             }
             if transport in ("driving", "taxi"):
                 body["type"] = "jam"
-            key = ("matrix", transport, tuple((round(points[k][0], 5), round(points[k][1], 5)) for k in used),
-                   tuple(body["sources"]), tuple(body["targets"]))
-            data = self._short_cache.get(key)
-            if data is None:
-                data = await self._post("matrix", f"{self._s.dgis_routing_url}/get_dist_matrix", body,
-                                        params={"version": "2.0"})
-                self._short_cache.set(key, data)
+            # Пешком и на велосипеде время не меняется — неделя; на авто пробки — 30 минут.
+            data = await self._post("matrix", f"{self._s.dgis_routing_url}/get_dist_matrix", body, params={"version": "2.0"},
+                                    ttl_s=1800 if transport in ("driving", "taxi") else 7 * 86400)
             back = {n: orig for orig, n in remap.items()}
             for route in data.get("routes") or []:
                 if route.get("status", "OK") != "OK":
@@ -605,13 +598,10 @@ class DgisClient:
             body["traffic_mode"] = "jam"
         if len(points) == 2:
             body["alternative"] = 2  # до двух альтернатив к основному варианту
-        # Квота демо-ключа 2ГИС мала: тот же маршрут (точки с точностью ~10 м) 10 минут берём из кэша —
-        # агент, повторные открытия шторки и смена вариантов не тратят запросы.
-        key = ("route", transport, tuple((round(lat, 4), round(lon, 4)) for lat, lon in points))
-        data = self._short_cache.get(key)
-        if data is None:
-            data = await self._post("routing", f"{self._s.dgis_routing_url}/routing/7.0.0/global", body, timeout=8.0)
-            self._short_cache.set(key, data)
+        # Точки округлены до ~10 м: тот же маршрут не тратит квоту. Пешие и вело — неделя, авто — 30 минут (пробки).
+        body["points"] = [{"type": "stop", "lat": round(lat, 4), "lon": round(lon, 4)} for lat, lon in points]
+        data = await self._post("routing", f"{self._s.dgis_routing_url}/routing/7.0.0/global", body, timeout=8.0,
+                                ttl_s=1800 if transport in ("driving", "taxi") else 7 * 86400)
         out = parse_route(data)
         out["source"] = "routing"
         return out
@@ -623,13 +613,12 @@ class DgisClient:
             "target": {"name": "Финиш", "point": {"lat": b[0], "lon": b[1]}},
             "transport": ["bus", "trolleybus", "tram", "shuttle_bus", "metro", "light_rail"],
         }
-        # Ответ кэшируется, а разбирается каждый раз заново: «через N минут» считается от текущего времени.
-        key = ("public_transport", round(a[0], 4), round(a[1], 4), round(b[0], 4), round(b[1], 4))
-        data = self._short_cache.get(key)
-        if data is None:
-            data = await self._post("public_transport", f"{self._s.dgis_routing_url}/public_transport/2.0", body,
-                                    timeout=8.0)
-            self._short_cache.set(key, data)
+        # Ответ кэшируется на 20 минут (расписание), а разбирается каждый раз заново: «через N минут» — от текущего
+        # времени. При лимите 2ГИС отдаётся последняя сохранённая копия — маршрут и остановки те же.
+        body["source"]["point"] = {"lat": round(a[0], 4), "lon": round(a[1], 4)}
+        body["target"]["point"] = {"lat": round(b[0], 4), "lon": round(b[1], 4)}
+        data = await self._post("public_transport", f"{self._s.dgis_routing_url}/public_transport/2.0", body,
+                                timeout=8.0, ttl_s=20 * 60)
         out = parse_public_transport(data, a, now_utc=time.time())
         out["source"] = "public_transport"
         return out

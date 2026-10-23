@@ -45,9 +45,15 @@ class SearchAgent:
         self.trip_checks = 0
         self.legs: dict[tuple, dict] = {}
         self.shown: dict[str, Evaluated] = {}
-        # Прошлый ответ (уточнение «добавь аптеку», «убери парк») — его места доступны по тем же id.
-        for it in (req.previous.items if req.previous else []):
+        # Прошлый ответ (уточнение «добавь аптеку», «убери парк») и места из приложения (открытый маршрут, навигация,
+        # план, понравившиеся) доступны агенту по своим id.
+        st = req.app_state
+        known = list(req.previous.items if req.previous else [])
+        if st:
+            known += [x for x in (st.route_to, st.nav_to) if x] + list(st.plan) + list(st.liked)
+        for it in known:
             self.places.setdefault(it.poi_id, Place(id=it.poi_id, name=it.name, lat=it.lat, lon=it.lon))
+        self.start_offset_min = 0
         # Сохранённые места пользователя — как обычные места с id saved:N.
         for i, sp in enumerate(req.saved_places):
             self.places[f"saved:{i}"] = Place(id=f"saved:{i}", name=sp.name, lat=sp.lat, lon=sp.lon, address=sp.address)
@@ -74,20 +80,38 @@ class SearchAgent:
             "category_interest": dict(sorted(self.req.profile_affinity.items(), key=lambda kv: -kv[1])[:8]),
             "saved_places": [{"place_id": f"saved:{i}", "name": sp.name, "address": sp.address}
                              for i, sp in enumerate(self.req.saved_places)],
+            "app": self._app_context(),
             "previous": None if not self.req.previous else {
                 "query": self.req.previous.query, "summary": self.req.previous.summary, "trip": self.req.previous.trip,
                 "items": [{"place_id": it.poi_id, "name": it.name, "purpose": it.purpose, "transport": it.transport}
                           for it in self.req.previous.items]},
         }
 
+    def _app_context(self) -> dict | None:
+        """Что сейчас в приложении: экран, маршрут и выбранный вариант, навигация, план, понравившееся, заряд."""
+        st = self.req.app_state
+        if st is None:
+            return None
+        ref = lambda x: {"place_id": x.poi_id, "name": x.name}  # noqa: E731
+        return {
+            "screen": st.screen,
+            "open_route": None if not st.route_to else {**ref(st.route_to), "transport": st.route_transport, "chosen_option": st.route_option},
+            "navigation": None if not st.nav_to else {**ref(st.nav_to), "remaining_min": st.nav_remaining_min},
+            "plan": [ref(x) for x in st.plan],
+            "liked_places": [ref(x) for x in st.liked],
+            "recent_queries": st.recent_queries,
+            "battery_percent": st.battery, "charging": st.charging,
+        }
+
     # ---------- инструменты ----------
     async def execute(self, name: str, args: dict) -> dict:
         if name == "search_places":
-            return await self._search(str(args["query"]), int(args.get("radius_m") or 3000))
+            return await self._search(str(args["query"]), int(args.get("radius_m") or 3000), args.get("near_place_id"))
         if name == "check_trip":
             return await self._trip([str(p) for p in args.get("place_ids") or []],
                                     [int(v) for v in args.get("visit_min") or []],
-                                    [str(v) for v in args.get("transports") or []])
+                                    [str(v) for v in args.get("transports") or []],
+                                    max(0, min(int(args.get("start_in_min") or 0), 24 * 60)))
         if name == "find_address":
             return await self._address(str(args["query"]))
         if name == "place_details":
@@ -96,11 +120,17 @@ class SearchAgent:
             return await self._route(str(args["place_id"]), str(args["transport"]))
         return {"error": f"неизвестный инструмент {name}"}
 
-    async def _search(self, query: str, radius: int) -> dict:
+    async def _search(self, query: str, radius: int, near_place_id: str | None = None) -> dict:
         radius = max(300, min(radius, 30_000))
-        await self.emit(("progress", {"text": f"Ищу: {query}"}))
-        places = await self.svc.places.places(q=query, lat=self.origin[0], lon=self.origin[1], radius_m=radius,
-                                              page_size=10)
+        # Поиск возле любой точки: у остановки, у дома брата, рядом со вторым местом маршрута.
+        center = self.origin
+        near = self.places.get(str(near_place_id)) if near_place_id else None
+        if near_place_id and near is None:
+            near = await self.svc.places.place_by_id(str(near_place_id))
+        if near is not None:
+            center = (near.lat, near.lon)
+        await self.emit(("progress", {"text": f"Ищу: {query}" + (f" возле «{near.name}»" if near else "")}))
+        places = await self.svc.places.places(q=query, lat=center[0], lon=center[1], radius_m=radius, page_size=10)
         mode = self.transport if self.transport in MATRIX_TRANSPORTS else "walking"
         etas = await travel_times(self.svc, self.origin, places, mode)
         out = []
@@ -115,7 +145,10 @@ class SearchAgent:
             await self.emit(("candidates", {
                 "items": [to_candidate(ev, self.svc.catalog, mode).model_dump() for ev in list(self.shown.values())[:15]],
                 "data_source": self.svc.data_source}))
-        return {"query": query, "radius_m": radius, "eta_transport": TRANSPORT_LABELS.get(mode, mode),
+        if near is not None:
+            for o, p in zip(out, places):
+                o["distance_from_center_m"] = int(round(haversine_m(center[0], center[1], p.lat, p.lon), -1))
+        return {"query": query, "radius_m": radius, "near": near.name if near else None, "eta_transport": TRANSPORT_LABELS.get(mode, mode),
                 "places": out, "note": None if out else "Ничего не найдено — попробуй другую формулировку или радиус."}
 
     async def _leg(self, a: tuple[float, float], b: tuple[float, float], transport: str) -> dict:
@@ -136,7 +169,7 @@ class SearchAgent:
         self.legs[key] = leg
         return leg
 
-    async def _trip(self, place_ids: list[str], visits: list[int], transports: list[str]) -> dict:
+    async def _trip(self, place_ids: list[str], visits: list[int], transports: list[str], start_in_min: int = 0) -> dict:
         """Маршрут через несколько точек в заданном порядке: по каждому этапу — варианты дороги (какой автобус,
         отправление, пересадки), прибытие и уход, открыто ли к приходу. Время считается по самому быстрому варианту."""
         if not 1 <= len(place_ids) <= 6:
@@ -152,7 +185,8 @@ class SearchAgent:
             self.places[p.id] = p
             places.append(p)
         await self.emit(("progress", {"text": "Проверяю порядок: " + " → ".join(p.name for p in places)[:120]}))
-        stops, here, clock = [], self.origin, 0.0
+        # Выход позже («через час», «завтра в 10») — прибытие и «открыто ли» считаются от этого времени.
+        stops, here, clock = [], self.origin, float(start_in_min)
         for i, p in enumerate(places):
             transport = transports[i] if i < len(transports) else (transports[-1] if transports else self.transport)
             leg = await self._leg(here, (p.lat, p.lon), transport)
@@ -168,19 +202,25 @@ class SearchAgent:
                           "leave_at": (self.now + timedelta(minutes=clock + visit)).strftime("%H:%M")})
             clock += visit
             here = (p.lat, p.lon)
-        return {"stops": stops, "total_min": round(clock), "finish_at": (self.now + timedelta(minutes=clock)).strftime("%H:%M"),
+        return {"stops": stops, "start_at": (self.now + timedelta(minutes=start_in_min)).strftime("%H:%M"),
+                "total_min": round(clock - start_in_min), "finish_at": (self.now + timedelta(minutes=clock)).strftime("%H:%M"),
                 "note": "Для каждой точки выбери route_option_id из route_options её этапа (по умолчанию — самый быстрый)."}
 
     async def _plan(self, items: list[AnswerItem], visits: list[int], purposes: list[str], option_ids: list[str | None]) -> Plan:
         """План по точкам ответа в его порядке: на каждом этапе — выбранный агентом вариант дороги целиком
         (линия, манёвры, автобусы и остановки), расписание прибытия и ухода."""
-        legs, geometry, here, clock = [], [], self.origin, 0.0
+        legs, geometry, here, clock = [], [], self.origin, float(self.start_offset_min)
         for i, it in enumerate(items):
             p = self.places[it.poi_id]
             leg = await self._leg(here, (p.lat, p.lon), it.transport)
             opt = next((o for o in leg["options"] if str(o.get("id")) == str(option_ids[i])), None) or \
                 min(leg["options"], key=lambda o: o.get("total_duration_s") or 0)
             dur = (opt.get("total_duration_s") or 0) / 60
+            # Отправление автобуса «через N минут» верно только для этапа, который начинается сейчас. Если этап
+            # начнётся позже (выход через полчаса, второй этап), показываем интервал движения, а не прошедший рейс.
+            later = clock > 10
+            if later:
+                opt = {**opt, "departure": None, "departure_in_min": None, "next_departures": []}
             clock += dur
             info = open_at(p.schedule, self.now, clock)
             visit = visits[i]
@@ -201,7 +241,7 @@ class SearchAgent:
                                 route=route, route_label=_route_label(opt, it.transport)))
             clock += visit
             here = (p.lat, p.lon)
-        return Plan(legs=legs, total_min=round(clock), rain_exposure_min=0, geometry=geometry)
+        return Plan(legs=legs, total_min=round(clock - self.start_offset_min), rain_exposure_min=0, geometry=geometry)
 
     def validate(self, result: dict) -> str | None:
         """Проверка ответа перед показом: каждый шаг запроса закрыт местом или объяснён, места — из инструментов."""
@@ -340,6 +380,7 @@ class SearchAgent:
                              "note": d.get("note"), "options": route["options"]}
                 route_opt = option["id"]
         plan = None
+        self.start_offset_min = max(0, min(int(result.get("trip_start_in_min") or 0), 24 * 60))
         if result.get("trip") and len(items) >= 2:
             raw = (result.get("items") or [])[:5]
             kept = {it.poi_id for it in items}
@@ -359,6 +400,7 @@ class SearchAgent:
         return Answer(mode=mode, items=items, idea=_trim(result.get("idea"), 300), data_source=self.svc.data_source,
                       summary=_trim(result.get("summary"), 300), understood=[str(u)[:40] for u in (result.get("understood") or [])[:5]],
                       route=route_out, route_option_id=route_opt, remember=remember, plan=plan,
+                      start_navigation=bool(result.get("start_navigation")) and bool(items),
                       skipped=[f"{_trim(s.get('step'), 60)} — {_trim(s.get('reason'), 140)}"
                                for s in (result.get("skipped") or [])[:5] if s.get("step")],
                       note=None if items else (_trim(result.get("summary"), 300) or "Подходящих мест не нашлось."))

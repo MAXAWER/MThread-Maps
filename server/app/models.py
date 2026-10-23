@@ -106,6 +106,21 @@ class PreviousAnswer(BaseModel):
     items: list[PreviousItem] = Field(default_factory=list, max_length=8)
 
 
+class AppState(BaseModel):
+    """Что сейчас в приложении — контекст для ИИ: экран, маршрут, навигация, план, понравившееся, заряд."""
+    screen: str = Field(default="map", max_length=20)                  # map / results / route / plan / place / navigation
+    route_to: PreviousItem | None = None                                # открытый маршрут: куда
+    route_transport: str | None = None
+    route_option: str | None = Field(default=None, max_length=160)     # выбранный вариант: «Автобус 47 · 39 мин»
+    nav_to: PreviousItem | None = None                                  # идёт навигация: куда
+    nav_remaining_min: int | None = None
+    plan: list[PreviousItem] = Field(default_factory=list, max_length=8)
+    liked: list[PreviousItem] = Field(default_factory=list, max_length=12)
+    recent_queries: list[str] = Field(default_factory=list, max_length=8)
+    battery: int | None = Field(default=None, ge=0, le=100)
+    charging: bool | None = None
+
+
 class SearchRequest(GeoRequest):
     query: str = Field(min_length=1, max_length=500)
     local_time: datetime
@@ -117,6 +132,7 @@ class SearchRequest(GeoRequest):
     filters: JevFilters | None = None  # фильтры, правленные клиентом: Jev не вызывается повторно
     saved_places: list[SavedPlaceIn] = Field(default_factory=list, max_length=20)
     previous: PreviousAnswer | None = None
+    app_state: AppState | None = None
 
     @field_validator("local_time")
     @classmethod
@@ -218,6 +234,7 @@ class Answer(BaseModel):
     route_option_id: str | None = None    # выбранный агентом вариант маршрута
     remember: RememberOffer | None = None  # предложение запомнить место (с разрешения)
     skipped: list[str] = Field(default_factory=list)  # шаги запроса, которые выполнить не удалось, с причиной
+    start_navigation: bool = False  # человек просил «веди» — приложение сразу запускает навигацию
 
 
 class PlacePoint(BaseModel):

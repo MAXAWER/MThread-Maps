@@ -42,7 +42,7 @@ async def test_matrix_splits_into_demo_key_blocks():
 
     bodies = []
 
-    async def fake_post(service, url, body, params=None):
+    async def fake_post(service, url, body, params=None, ttl_s=None):
         bodies.append(body)
         return {"routes": [{"source_id": s, "target_id": t, "duration": 60, "distance": 100, "status": "OK"}
                            for s in body["sources"] for t in body["targets"]]}

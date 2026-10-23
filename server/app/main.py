@@ -22,6 +22,7 @@ from .geo import round_coord
 from .models import (ASTANA_TZ, ClickoutIn, DeckRequest, NotifyRequest, ProfileUpdateRequest, RouteOut, RouteRequest,
                      SearchRequest, TaxiRequest)
 from .partners import STATS, taxi_partners, yandex_prices
+from .store import STORE
 from .notify import notify_candidates
 from .profile import update_profile
 from .schedule import open_info
@@ -113,6 +114,12 @@ async def request_log(request: Request, call_next):
     log.info("http %s %s %s %s %dms", rid, request.method, path, response.status_code,
              int((time.perf_counter() - t0) * 1000))
     response.headers["X-Request-Id"] = rid
+    # Телефон хранит у себя карточки мест (сутки) и подсказки (неделю): повторный показ — без сервера и без 2ГИС.
+    if request.method == "GET" and response.status_code == 200:
+        if path.startswith("/v1/places/"):
+            response.headers["Cache-Control"] = "private, max-age=86400"
+        elif path == "/v1/suggest":
+            response.headers["Cache-Control"] = "private, max-age=604800"
     return response
 
 
@@ -248,13 +255,20 @@ async def clickout(req: ClickoutIn, _: str = Depends(install_id)):
     return {"ok": True}
 
 
+def svc_counters() -> dict:
+    """Сколько запросов к 2ГИС реально ушло в сеть по сервисам (с момента запуска экземпляра)."""
+    svc = getattr(app.state, "svc", None)
+    c = getattr(svc, "counters", None)
+    return dict(getattr(c, "counts", {}) or {}) if c is not None else {}
+
+
 @app.get("/v1/admin/stats")
 async def admin_stats(authorization: str | None = Header(default=None)):
     """Переходы к партнёрам и клики по рекламе с момента запуска экземпляра (полные данные — в журнале)."""
     token = os.getenv("ADMIN_TOKEN")
     if not token or authorization != f"Bearer {token}":
         raise ApiError(403, "forbidden", "Нужен токен администратора.")
-    return {"counts": dict(STATS.counts)}
+    return {"counts": dict(STATS.counts), "dgis_cache": dict(STORE.stats), "dgis_calls": svc_counters()}
 
 
 @app.post("/v1/deck")

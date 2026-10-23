@@ -110,6 +110,9 @@ interface DeckDao {
     @Query("SELECT * FROM deck_card WHERE status IN ('liked', 'visited') ORDER BY createdMs DESC")
     fun likedCards(): Flow<List<DeckCardEntity>>
 
+    @Query("SELECT * FROM deck_card WHERE status IN ('liked', 'visited') ORDER BY createdMs DESC LIMIT 12")
+    suspend fun likedList(): List<DeckCardEntity>
+
     @Query("SELECT * FROM deck_card WHERE poiId = :poiId LIMIT 1")
     suspend fun byId(poiId: String): DeckCardEntity?
 

@@ -46,6 +46,7 @@ import kz.smartcity.walk.data.api.RememberOffer
 import kz.smartcity.walk.data.api.SavedPlaceIn
 import kz.smartcity.walk.data.api.PreviousAnswer
 import kz.smartcity.walk.data.api.PreviousItem
+import kz.smartcity.walk.data.api.AppStateDto
 import kz.smartcity.walk.nav.NavigationService
 import kz.smartcity.walk.walk.WalkDetector
 import kz.smartcity.walk.walk.WalkService
@@ -285,6 +286,7 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
                 ?: a.items.map { PreviousItem(it.poiId, it.name, it.lat, it.lon, transport = it.transport) }
             PreviousAnswer(_state.value.lastQuery, a.summary, trip = a.plan != null, items = stops.take(8))
         }
+        val appBase = appState()
         finishSearch(if (filters == null) "reformulated" else null)
         searchJob?.cancel()
         suggestJob?.cancel()
@@ -310,6 +312,7 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
                 profileSummary = g.profile.summary(nowMs), profileAffinity = g.profile.affinity(), filters = filters,
                 // Сохранённые места — чтобы «поехали к брату» понимал и ИИ (координаты с точностью ~10 м).
                 previous = previous,
+                appState = appBase.copy(liked = g.deck.likedNow().map { PreviousItem(it.card.poiId, it.card.name, it.card.lat, it.card.lon, it.card.categoryName) }),
                 savedPlaces = g.places.items.value.map { p ->
                     SavedPlaceIn(p.name, p.address, Math.round(p.lat * 1e4) / 1e4, Math.round(p.lon * 1e4) / 1e4)
                 },
@@ -334,6 +337,39 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
             }
             _state.update { it.copy(searching = false) }
         }
+    }
+
+    /**
+     * Что сейчас на экране — ИИ видит открытый маршрут и выбранный вариант, идущую поездку, план, недавние запросы и
+     * заряд телефона, поэтому понимает «а на автобусе?», «по дороге заедем…», «поменяй вариант».
+     */
+    private fun appState(): AppStateDto {
+        val s = _state.value
+        val nav = kz.smartcity.walk.nav.NavigationBus.state.value
+        val bm = g.app.getSystemService(android.os.BatteryManager::class.java)
+        val option = s.route?.options?.firstOrNull { it.id == s.selectedOptionId }
+        return AppStateDto(
+            screen = when {
+                nav != null -> "navigation"
+                s.sheet == SheetMode.ROUTE -> "route"
+                s.sheet == SheetMode.PLAN -> "plan"
+                s.sheet == SheetMode.PLACE -> "place"
+                s.sheet == SheetMode.RESULTS -> "results"
+                else -> "map"
+            },
+            routeTo = s.routeTarget?.takeIf { s.sheet == SheetMode.ROUTE }?.let { PreviousItem(it.poiId, it.name, it.lat, it.lon) },
+            routeTransport = s.routeTransport.takeIf { s.sheet == SheetMode.ROUTE },
+            routeOption = option?.let { o ->
+                val rides = o.legs.filter { it.kind != "walk" }.joinToString(" → ") { l -> l.names.joinToString(", ") }
+                listOfNotNull(rides.ifBlank { null }, "${o.totalDurationS / 60} мин", o.label).joinToString(" · ")
+            },
+            navTo = nav?.dest?.let { PreviousItem(it.poiId, it.name, it.lat, it.lon) },
+            navRemainingMin = nav?.etaMin,
+            plan = s.answer?.plan?.legs?.map { PreviousItem(it.to, it.name, it.lat, it.lon, it.purpose, it.transport) }.orEmpty(),
+            recentQueries = g.places.recent.value.take(8),
+            battery = bm?.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)?.takeIf { it in 0..100 },
+            charging = bm?.isCharging,
+        )
     }
 
     private suspend fun onAnswer(answer: Answer, c: SearchCtx) {
@@ -366,6 +402,15 @@ class MapViewModel(private val g: AppGraph) : ViewModel() {
                 }
             }
             a.mode == "place" && first != null -> openItem(first)
+        }
+        // «Веди», «поехали»: навигация сразу — по плану, по выбранному варианту или к первому месту.
+        if (a.startNavigation && first != null) when {
+            a.plan != null -> startPlan()
+            route != null -> startNavigation()
+            else -> {
+                pendingNavigation = true
+                routeTo(Target(first.poiId, first.name, first.lat, first.lon, first.category, first.openUntil), first.transport)
+            }
         }
     }
 

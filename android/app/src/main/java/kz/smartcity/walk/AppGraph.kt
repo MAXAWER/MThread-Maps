@@ -26,7 +26,7 @@ class AppGraph(context: Context) {
     val app: Context = context.applicationContext
     val settings = Settings(app)
     val places = kz.smartcity.walk.data.QuickPlaces(app)
-    val api = ApiClient({ settings.apiBaseUrl }, { settings.installId })
+    val api = ApiClient({ settings.apiBaseUrl }, { settings.installId }, java.io.File(app.cacheDir, "http"))
     val json get() = api.json
     val db = AppDatabase.create(app)
     val history = HistoryRepository(db)

@@ -145,3 +145,45 @@ async def test_agent_failure_falls_back_to_pipeline():
     events = await _events(svc)
     names = [n for n, _ in events]
     assert "progress" in names and "filters" in names and "answer" in names and names[-1] == "done"
+
+
+class ContextAgentLLM(ScriptedAgentLLM):
+    """«По дороге к брату заедем за кофе, выйду через час, веди»: контекст приложения, поиск у точки, время, навигация."""
+
+    async def agent_loop(self, payload, execute, on_turn=None, on_web=None, validate=None):
+        self.payload = payload
+        app = payload["app"]
+        brother = app["open_route"]["place_id"]
+        coffee = await execute("search_places", {"query": "кофейня", "radius_m": 1500, "near_place_id": brother})
+        assert coffee["near"] == "Брат" and "distance_from_center_m" in coffee["places"][0]
+        cid = coffee["places"][0]["id"]
+        trip = await execute("check_trip", {"place_ids": [cid, brother], "visit_min": [15, 60], "transports": ["walking"],
+                                            "start_in_min": 60})
+        self.trip = trip
+        item = {"why": "—", "action": "—", "transport": "walking", "route_option_id": None, "evidence": []}
+        return {"items": [{**item, "place_id": cid, "visit_min": 15, "purpose": "Кофе"},
+                          {**item, "place_id": brother, "visit_min": 60, "purpose": "К брату"}],
+                "understood": ["Кофе по пути", "Через час"], "summary": "Кофе по пути к брату.", "show_route": False,
+                "idea": None, "trip": True, "remember": None, "requested_steps": ["кофе", "к брату"], "skipped": [],
+                "trip_start_in_min": 60, "start_navigation": True}
+
+
+async def test_agent_uses_app_context_near_search_start_time_and_navigation():
+    from app.models import AppState, PreviousItem
+    svc = make_services()
+    svc.llm = ContextAgentLLM()
+    brother = PreviousItem(poi_id="saved-brother", name="Брат", lat=MSW[0] + 0.01, lon=MSW[1] + 0.01)
+    state = AppState(screen="route", route_to=brother, route_transport="walking", route_option="Пешком · 25 мин",
+                     recent_queries=["кофе"], battery=15, charging=False)
+    req = SearchRequest(query="по дороге к брату заедем за кофе, выйду через час, веди", lat=MSW[0], lon=MSW[1],
+                        local_time=at(14), app_state=state)
+    events = []
+    async for chunk in stream_search(req, svc):
+        lines = chunk.strip().split("\n")
+        events.append((lines[0].removeprefix("event: "), json.loads(lines[1].removeprefix("data: "))))
+    app = svc.llm.payload["app"]
+    assert app["screen"] == "route" and app["battery_percent"] == 15 and app["open_route"]["chosen_option"] == "Пешком · 25 мин"
+    assert svc.llm.trip["start_at"] == "15:00"
+    answer = next(d for n, d in events if n == "answer")
+    assert answer["start_navigation"] is True and answer["mode"] == "plan"
+    assert answer["plan"]["legs"][0]["arrive_at"] >= "15:00"

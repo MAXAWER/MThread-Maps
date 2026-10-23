@@ -128,6 +128,9 @@ class DeckRepository(
         ordered.forEachIndexed { i, (c, _) -> db.deck().setRank(c.poiId, i + 1) }
     }
 
+    /** Понравившиеся сейчас — для контекста ИИ. */
+    suspend fun likedNow(): List<DeckItem> = db.deck().likedList().mapNotNull(::decode)
+
     /** Отметить «Был здесь» — карточка остаётся в понравившихся, но с отметкой. */
     suspend fun markVisited(poiId: String) = db.deck().setStatus(poiId, "visited")
 

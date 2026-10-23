@@ -34,7 +34,7 @@ sealed interface SearchEvent {
 }
 
 /** Клиент своего сервера. Приложение обращается только к нему (кроме тайлов MapGL). */
-class ApiClient(private val baseUrl: () -> String, private val installId: () -> String) {
+class ApiClient(private val baseUrl: () -> String, private val installId: () -> String, cacheDir: java.io.File? = null) {
 
     @OptIn(ExperimentalSerializationApi::class)
     val json = Json {
@@ -45,7 +45,9 @@ class ApiClient(private val baseUrl: () -> String, private val installId: () -> 
         namingStrategy = JsonNamingStrategy.SnakeCase
     }
 
+    // Дисковый HTTP-кэш: карточки мест и подсказки, раз загруженные, берутся с телефона (сервер задаёт сроки).
     private val http = OkHttpClient.Builder()
+        .apply { cacheDir?.let { cache(okhttp3.Cache(it, 20L * 1024 * 1024)) } }
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .callTimeout(90, TimeUnit.SECONDS)
